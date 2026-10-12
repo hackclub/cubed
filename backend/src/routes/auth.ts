@@ -89,11 +89,18 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
   const state = c.req.query("state");
   const expectedState = getCookie(c, STATE_COOKIE_NAME);
 
-  deleteCookie(c, STATE_COOKIE_NAME, { path: "/" });
-
+  // Usually a duplicate callback (double click, refresh, two tabs) or an expired cookie. Only a
+  // match consumes the state, so a stray duplicate can't break a login still in flight.
   if (!code || !state || !expectedState || state !== expectedState) {
-    return c.text("Invalid OAuth state", 400);
+    if (c.get("user")) {
+      return c.redirect(`${config.frontendUrl}/dashboard`);
+    }
+    return c.redirect(
+      `${config.frontendUrl}/login?error=${encodeURIComponent("Your login expired or was opened twice. Please try again.")}`,
+    );
   }
+
+  deleteCookie(c, STATE_COOKIE_NAME, { path: "/" });
 
   const tokenResponse = await fetch(`${AUTH_BASE_URL}/oauth/token`, {
     method: "POST",
