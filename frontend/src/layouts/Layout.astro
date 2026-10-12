@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import { ClientRouter } from "astro:transitions";
 import SeoMeta from "../components/SeoMeta.astro";
 
 interface Props {
@@ -22,6 +23,9 @@ const {
 		<meta name="viewport" content="width=device-width" />
 		<meta name="generator" content={Astro.generator} />
 		<title>Cubed YSWS</title>
+		<!-- Lets links into the dashboard (and back) fade instead of hard-reloading;
+		     DashboardLayout/DocsLayout have it too, which is the other half. -->
+		<ClientRouter />
 		<SeoMeta title="Cubed YSWS" {description} />
 	</head>
 	<body>

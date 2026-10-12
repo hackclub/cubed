@@ -46,7 +46,13 @@
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "Couldn't create the project.");
+        throw new Error(
+          body.error === "draft_limit"
+            ? "You can have up to 6 drafts at once. Submit or delete one of your drafts first."
+            : body.error === "reused_rejected"
+              ? "That repo was used on a project of yours that was rejected, so it can't be reused."
+              : (body.error ?? "Couldn't create the project."),
+        );
       }
 
       const project = await res.json();

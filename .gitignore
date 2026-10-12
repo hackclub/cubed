@@ -1,6 +1,6 @@
-# Claude Code local config/instructions — not tracked
+# Claude Code local config — not tracked. (CLAUDE.md IS tracked: DEVELOPER.md
+# links to it for the project rules.)
 .claude/
-CLAUDE.md
 
 # planning docs — not tracked
 docs/*.md
@@ -29,3 +29,7 @@ pnpm-debug.log*
 
 # OS
 .DS_Store
+
+# working notes — not tracked
+PROGRESS.md
+SCRATCHPAD.md

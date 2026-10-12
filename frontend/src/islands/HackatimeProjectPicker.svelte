@@ -1,50 +1,25 @@
 <script>
-  // Persistent selection (name -> {name, start, end, text}), shown as cards
-  // with their own remove (×) button — independent of the picker dialog,
-  // which is only for adding more. Each entry keeps the date range it was
-  // added under, so reopening the dialog with a different range and adding
-  // more doesn't retroactively change already-picked entries' dates — the
-  // real Airtable field's own spec allows differing ranges per project,
-  // this now actually supports that instead of forcing one shared range.
+  // Persistent selection (name -> {name, text}), shown as cards with their
+  // own remove (×) button — independent of the picker dialog, which is only
+  // for adding more. Only project NAMES are chosen here: the date range is
+  // fixed on the server (program start → today), so there are no dates to
+  // pick, and the Hackatime user ID is resolved server-side too.
   import { apiFetch } from "../lib/api-client";
 
   // `initialFormatted` is the project's already-saved value (if any) —
   // parsed back into cards on mount so reopening a draft shows what was
-  // already picked, not an empty list. Hours/minutes aren't recoverable
-  // from the saved string alone, so restored cards show their date range
-  // instead of an hours total (only freshly-loaded entries have that).
+  // already picked, not an empty list. Hours aren't recoverable from the
+  // saved string, so restored cards show a generic label instead.
   let { onSelectionChange, initialFormatted = "" } = $props();
 
-  // Fixed, not user-chosen — start of this month through Dec 31 of this
-  // year, always. No date inputs in the UI at all.
-  const startDate = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`;
-  const endDate = `${new Date().getFullYear()}-12-31`;
-
-  // M/D/YYYY, no leading zeros — matches the field's own example format
-  // ("7/20/2026-7/22/2026"), not the <input type="date"> ISO value.
-  function formatDate(isoDate) {
-    const [y, m, d] = isoDate.split("-");
-    return `${Number(m)}/${Number(d)}/${y}`;
-  }
-
-  function usDateToIso(usDate) {
-    const [m, d, y] = usDate.split("/");
-    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  }
-
-  // Reverses formatDate()'s "name M/D/YYYY-M/D/YYYY" — name itself may
-  // contain spaces/dashes, so the date-range suffix is matched from the
-  // right rather than split naively on the first space.
-  function parseFormatted(str) {
-    /** @type {Record<string, {name: string, start: string, end: string, text: string}>} */
-    const result = {};
-    for (const part of str.split(",").map((s) => s.trim()).filter(Boolean)) {
-      const match = part.match(/^(.*)\s+(\d{1,2}\/\d{1,2}\/\d{4})-(\d{1,2}\/\d{1,2}\/\d{4})$/);
-      if (!match) continue;
-      const [, name, startStr, endStr] = match;
-      result[name] = { name, start: usDateToIso(startStr), end: usDateToIso(endStr), text: `${startStr}-${endStr}` };
-    }
-    return result;
+  // Names are matched by their trailing date range (they may contain spaces
+  // or commas themselves), mirroring backend/src/lib/hackatime-selection.ts.
+  function namesFromFormatted(str) {
+    const names = [];
+    const regex = /(.+?) \d{1,2}\/\d{1,2}\/\d{4}-\d{1,2}\/\d{1,2}\/\d{4}(?:, |$)/gy;
+    let match;
+    while ((match = regex.exec(str)) !== null) names.push(match[1]);
+    return names;
   }
 
   let dialogOpen = $state(false);
@@ -52,29 +27,30 @@
   let error = $state("");
   let loadedProjects = $state(/** @type {{name: string, hours: number, minutes: number, text: string}[]} */ ([]));
   let hasLoaded = $state(false);
-  let hackatimeUserId = $state("");
 
-  /** @type {Record<string, {name: string, start: string, end: string, text: string}>} */
-  let selected = $state(parseFormatted(initialFormatted));
+  /** @type {Record<string, {name: string, text: string}>} */
+  let selected = $state(
+    Object.fromEntries(namesFromFormatted(initialFormatted).map((name) => [name, { name, text: "counted since June 1" }])),
+  );
 
   function notify() {
-    const entries = Object.values(selected);
-    const formatted = entries.map((e) => `${e.name} ${formatDate(e.start)}-${formatDate(e.end)}`).join(", ");
-    onSelectionChange?.({ formatted, hackatimeUserId: entries.length > 0 ? hackatimeUserId : "" });
+    onSelectionChange?.({ names: Object.values(selected).map((entry) => entry.name) });
   }
 
   async function loadProjects() {
     loading = true;
     error = "";
     try {
-      const res = await apiFetch(`/me/hackatime-projects?start=${startDate}&end=${endDate}`);
+      const res = await apiFetch("/me/hackatime-projects");
       if (!res.ok) throw new Error("Couldn't load your Hackatime projects. Try again in a moment.");
       const body = await res.json();
-      loadedProjects = body.projects ?? [];
-      hackatimeUserId = body.hackatimeUserId || hackatimeUserId;
+      // Hackatime can return two projects with the same name (e.g. two "Other"s);
+      // selection is by name and the list is keyed by it, so keep the first of each.
+      const seen = new Set();
+      loadedProjects = (body.projects ?? []).filter((p) => !seen.has(p.name) && seen.add(p.name));
       hasLoaded = true;
       if (loadedProjects.length === 0) {
-        error = "No Hackatime activity found in that date range.";
+        error = "No Hackatime activity found since June 1.";
       }
     } catch (err) {
       error = err instanceof Error ? err.message : "Something went wrong.";
@@ -90,7 +66,7 @@
       const { [project.name]: _removed, ...rest } = selected;
       selected = rest;
     } else {
-      selected = { ...selected, [project.name]: { name: project.name, start: startDate, end: endDate, text: project.text } };
+      selected = { ...selected, [project.name]: { name: project.name, text: project.text } };
     }
     notify();
   }
@@ -163,7 +139,8 @@
       >
         &times;
       </button>
-      <h3 class="mb-4 pr-8 text-lg font-bold text-[#2e4a3d]">Select Hackatime projects</h3>
+      <h3 class="mb-1 pr-8 text-lg font-bold text-[#2e4a3d]">Select Hackatime projects</h3>
+      <p class="mb-4 text-xs text-black/60">Hours are counted from June 1 until you submit.</p>
 
       <div class="flex flex-col gap-2">
         {#if loading}

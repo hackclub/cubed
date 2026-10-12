@@ -16,6 +16,8 @@
   import { fade } from "svelte/transition";
   import { apiFetch } from "../lib/api-client";
   import PopupShell from "./room/PopupShell.svelte";
+  import { getContext } from "svelte";
+  import { ID_VERIFIED_CONTEXT, NOT_VERIFIED_MESSAGE } from "../lib/verification";
 
   let { projectId, project, onSuccess } = $props();
 
@@ -85,6 +87,13 @@
   let improve = $state("");
   let usedAi = $state(false);
   let aiDetails = $state("");
+  // Mandatory yes/no, deliberately no default so it can't be skipped; when yes,
+  // the link and both explanations are required.
+  let tutorialAnswer = $state(/** @type {"yes" | "no" | null} */ (null));
+  let usedTutorial = $derived(tutorialAnswer === "yes");
+  let tutorialLink = $state("");
+  let tutorialHowClose = $state("");
+  let tutorialUnique = $state("");
   let reviewerNotes = $state("");
 
   let screenshotFile = $state(null);
@@ -105,7 +114,13 @@
     }, autoClearMs);
   }
 
+  const idVerified = getContext(ID_VERIFIED_CONTEXT) !== false;
+
   function openModal() {
+    if (!idVerified) {
+      setTemporaryError(NOT_VERIFIED_MESSAGE, 15000);
+      return;
+    }
     const missing = missingFields();
     if (missing.length > 0) {
       setTemporaryError(
@@ -131,13 +146,24 @@
   }
 
   function onScreenshotChange(event) {
-    screenshotFile = event.currentTarget.files?.[0] ?? null;
+    const file = event.currentTarget.files?.[0] ?? null;
+    // The YSWS guidelines don't allow GIFs/animated screenshots (the server also
+    // checks the file's real contents, so a renamed GIF or animated WebP is caught too).
+    if (file && file.type === "image/gif") {
+      event.currentTarget.value = "";
+      screenshotFile = null;
+      error = "Your screenshot can't be a GIF or any animated image. Use a still PNG, JPEG or WebP.";
+      return;
+    }
+    error = "";
+    screenshotFile = file;
   }
 
-  // Matches the backend's firstName/lastName regex (letters + spaces only) —
-  // strips as-you-type so the field can never hold something the submit will reject.
+  // Matches the backend's firstName/lastName regex (Unicode letters, marks,
+  // spaces, hyphens, apostrophes, periods) — strips anything else as-you-type
+  // but keeps accents like José and O'Brien intact.
   function onlyLettersAndSpaces(event) {
-    return event.currentTarget.value.replace(/[^A-Za-z ]/g, "");
+    return event.currentTarget.value.replace(/[^\p{L}\p{M} .'’-]/gu, "");
   }
 
   async function submitForm(event) {
@@ -167,6 +193,10 @@
     formData.append("improve", improve.trim());
     formData.append("usedAi", usedAi ? "true" : "false");
     formData.append("aiDetails", aiDetails.trim());
+    formData.append("usedTutorial", usedTutorial ? "true" : "false");
+    formData.append("tutorialLink", tutorialLink.trim());
+    formData.append("tutorialHowClose", tutorialHowClose.trim());
+    formData.append("tutorialUnique", tutorialUnique.trim());
     formData.append("reviewerNotes", reviewerNotes.trim());
     formData.append("screenshot", screenshotFile);
 
@@ -186,12 +216,28 @@
           window.location.href = "/blocked";
           return;
         }
+        if (body.error === "not_verified") {
+          throw new Error(NOT_VERIFIED_MESSAGE);
+        }
+        if (body.error === "eligibility_unverifiable") {
+          throw new Error("We couldn't verify your eligibility right now. Please try again in a moment.");
+        }
         throw new Error(
           body.error === "missing_urls"
             ? "Add a Code URL and Playable URL to your project before submitting."
             : body.error === "missing_hackatime"
               ? "Select your Hackatime project(s) on your project before submitting."
-              : (body.error ?? "Submission failed."),
+              : body.error === "hackatime_project_not_found"
+                ? "One of your selected Hackatime projects wasn't found on your account. Re-select your Hackatime projects."
+                : body.error === "hackatime_unavailable"
+                  ? "Couldn't reach Hackatime right now. Please try again in a moment."
+                  : body.error === "reused_rejected"
+                    ? "A project of yours was already rejected on this Hackatime project or repo, so it can't be submitted again under a new project."
+                    : body.error === "hours_in_use"
+                      ? `Your Hackatime project "${body.hackatimeProject}" is already used on your project "${body.projectName}", which is pending review or approved. The same hours can't be submitted twice, so pick different Hackatime projects.`
+                      : body.error === "attempt_limit"
+                      ? "This project has used all of its submission attempts."
+                      : (body.error ?? "Submission failed."),
         );
       }
 
@@ -245,7 +291,7 @@
   <PopupShell
     title={stage === "checklist" ? "Before you submit" : "Submit your project"}
     subtitle={stage === "form"
-      ? "Please double check your answers to make sure each on is accurate"
+      ? "Please double check your answers to make sure each one is accurate"
       : "Make sure all of this is true before you send it off. A reviewer will be checking every one of these."}
     maxWidth="max-w-xl"
     onClose={closeModal}
@@ -344,12 +390,12 @@
             Screenshot
             <input
               type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
+              accept="image/png,image/jpeg,image/webp"
               onchange={onScreenshotChange}
               required
               class={`${fieldClass} file:mr-3 file:border-2 file:border-[#5c4429] file:bg-app-lavender file:px-2 file:py-1 file:font-bold`}
             />
-            <span class="text-xs font-normal text-black/50">PNG, JPEG, GIF, or WebP. 5MB max.</span>
+            <span class="text-xs font-normal text-black/50">A still PNG, JPEG or WebP (no GIFs or animated images). 5MB max.</span>
           </label>
 
           <label class="flex cursor-pointer items-start gap-3 rounded-none border-2 border-[#5c4429]/30 bg-white/60 p-4">
@@ -358,9 +404,51 @@
           </label>
           {#if usedAi}
             <label class="flex flex-col gap-1 text-sm font-bold">
-              Where and how much AI did you use? Please be detialed
+              Where and how much AI did you use? Please be detailed
               <textarea
                 bind:value={aiDetails}
+                required
+                maxlength="2000"
+                rows="3"
+                use:autoResize
+                class={`${fieldClass} max-h-40 resize-none overflow-y-auto`}
+              ></textarea>
+            </label>
+          {/if}
+
+          <fieldset class="flex flex-col gap-2 rounded-none border-2 border-[#5c4429]/30 bg-white/60 p-4">
+            <legend class="px-1 text-sm font-bold">Did you follow a tutorial for this project?</legend>
+            <div class="flex gap-6 text-sm font-bold">
+              <label class="flex cursor-pointer items-center gap-2">
+                <input type="radio" name="tutorialAnswer" value="yes" bind:group={tutorialAnswer} required class="h-4 w-4 accent-[#5c4429]" />
+                Yes
+              </label>
+              <label class="flex cursor-pointer items-center gap-2">
+                <input type="radio" name="tutorialAnswer" value="no" bind:group={tutorialAnswer} required class="h-4 w-4 accent-[#5c4429]" />
+                No
+              </label>
+            </div>
+          </fieldset>
+          {#if usedTutorial}
+            <label class="flex flex-col gap-1 text-sm font-bold">
+              Which tutorial did you follow? (link)
+              <input type="url" bind:value={tutorialLink} required placeholder="https://..." class={fieldClass} />
+            </label>
+            <label class="flex flex-col gap-1 text-sm font-bold">
+              How closely did you follow it?
+              <textarea
+                bind:value={tutorialHowClose}
+                required
+                maxlength="2000"
+                rows="2"
+                use:autoResize
+                class={`${fieldClass} max-h-40 resize-none overflow-y-auto`}
+              ></textarea>
+            </label>
+            <label class="flex flex-col gap-1 text-sm font-bold">
+              What did you add or do yourself that wasn't in the tutorial?
+              <textarea
+                bind:value={tutorialUnique}
                 required
                 maxlength="2000"
                 rows="3"

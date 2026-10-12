@@ -120,6 +120,62 @@
       "when": 1790828858741,
       "tag": "0016_icy_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791237446219,
+      "tag": "0017_chilly_hercules",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791399573038,
+      "tag": "0018_dazzling_gambit",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791468426733,
+      "tag": "0019_daffy_union_jack",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791607549287,
+      "tag": "0020_useful_cloak",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791623368426,
+      "tag": "0021_sticky_brother_voodoo",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791661605181,
+      "tag": "0022_tiny_harry_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791666092709,
+      "tag": "0023_lying_xorn",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791761731460,
+      "tag": "0024_robust_harpoon",
+      "breakpoints": true
     }
   ]
 }

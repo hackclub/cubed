@@ -51,12 +51,20 @@ const announcements = announcementsRes.ok ? await announcementsRes.json() : [];
     )
   }
 
-  <a
-    href="/admin/analytics"
-    class="mb-12 inline-block w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-5 py-2.5 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/30"
-  >
-    Detailed analytics &rarr;
-  </a>
+  <div class="mb-12 flex flex-wrap gap-3">
+    <a
+      href="/admin/analytics"
+      class="inline-block w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-5 py-2.5 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/30"
+    >
+      Detailed analytics &rarr;
+    </a>
+    <a
+      href="/admin/audit"
+      class="inline-block w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-5 py-2.5 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/30"
+    >
+      Audit log &rarr;
+    </a>
+  </div>
 
   <section>
     <h2 class="mb-4 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Announcements</h2>

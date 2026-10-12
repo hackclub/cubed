@@ -8,6 +8,28 @@
 
   let { title, subtitle = "", maxWidth = "max-w-md", onClose, children } = $props();
 
+  const titleId = `popup-title-${Math.random().toString(36).slice(2, 8)}`;
+  let box;
+  let opener = null;
+
+  // Focus moves into the dialog and goes back to whatever opened it; Escape closes it.
+  // (Other popups can stack on top, so only the topmost one reacts to Escape.)
+  $effect(() => {
+    opener = document.activeElement;
+    box?.focus();
+    function onKey(event) {
+      if (event.key !== "Escape") return;
+      const dialogs = document.querySelectorAll("[data-popup-shell]");
+      if (dialogs[dialogs.length - 1] !== box?.parentElement) return;
+      onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener instanceof HTMLElement && document.contains(opener)) opener.focus();
+    };
+  });
+
   function onBackdropClick() {
     onClose();
   }
@@ -30,12 +52,18 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   use:portal
+  data-popup-shell
   class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-3 backdrop-blur-[2px] sm:p-6"
   onclick={onBackdropClick}
   transition:fade={{ duration: 180 }}
 >
   <div
-    class={`relative flex max-h-[85vh] w-[94vw] ${maxWidth} flex-col rounded-none border-[8px] border-[#5c4429] bg-[#cfe0d5] text-black shadow-xl sm:border-[10px]`}
+    bind:this={box}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={titleId}
+    tabindex="-1"
+    class={`relative flex outline-none max-h-[85vh] w-[94vw] ${maxWidth} flex-col rounded-none border-[8px] border-[#5c4429] bg-[#cfe0d5] text-black shadow-xl sm:border-[10px]`}
     onclick={(e) => e.stopPropagation()}
     transition:fade={{ duration: 180 }}
   >
@@ -48,7 +76,7 @@
       >
         &larr;
       </button>
-      <h2 class="text-4xl font-bold text-[#2e4a3d] sm:text-5xl">{title}</h2>
+      <h2 id={titleId} class="text-4xl font-bold text-[#2e4a3d] sm:text-5xl">{title}</h2>
       {#if subtitle}
         <p class="mx-auto mt-3 max-w-md text-sm text-black/60 sm:text-base">{subtitle}</p>
       {/if}

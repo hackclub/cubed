@@ -1,6 +1,6 @@
 ---
 title: Good Journaling
-order: 5
+order: 13
 section: Building
 description: Tips for keeping a good project journal in Cubed.
 ---

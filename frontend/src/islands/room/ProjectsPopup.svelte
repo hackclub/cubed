@@ -44,6 +44,17 @@
 
   let selected = $derived(items.find((p) => p.id === selectedId) ?? null);
 
+  const FILTERS = [
+    { value: "all", label: "All" },
+    { value: "draft", label: "Drafts" },
+    { value: "submitted", label: "Submitted" },
+    { value: "approved", label: "Approved" },
+    { value: "rejected", label: "Rejected" },
+  ];
+  let statusFilter = $state("all");
+  let visibleItems = $derived(statusFilter === "all" ? items : items.filter((p) => p.status === statusFilter));
+  const countFor = (value) => (value === "all" ? items.length : items.filter((p) => p.status === value).length);
+
   function statusColor(status) {
     switch (status) {
       case "approved":
@@ -83,8 +94,22 @@
         {#if items.length === 0}
           <p class="text-black/60">You haven't started a project yet. Click "New project" to get going.</p>
         {:else}
+          <div class="mb-4 flex flex-wrap gap-2">
+            {#each FILTERS as opt (opt.value)}
+              <button
+                type="button"
+                onclick={() => (statusFilter = opt.value)}
+                class={`cursor-pointer rounded-none border-2 border-[#5c4429]/40 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all ${statusFilter === opt.value ? "bg-[#5c4429] text-white" : "bg-white hover:bg-[#5c4429]/10"}`}
+              >
+                {opt.label} ({countFor(opt.value)})
+              </button>
+            {/each}
+          </div>
+          {#if visibleItems.length === 0}
+            <p class="text-black/60">No {statusFilter} projects.</p>
+          {/if}
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {#each items as project (project.id)}
+            {#each visibleItems as project (project.id)}
               <div class="group relative flex min-h-[300px] flex-col overflow-hidden rounded-lg border-2 border-[#3d2718] bg-[#2b1d14] text-[#f0e2c9] transition-all hover:-translate-y-1 hover:border-[#f0e2c9]/50">
                 <button
                   type="button"

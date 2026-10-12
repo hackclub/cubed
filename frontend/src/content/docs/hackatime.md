@@ -1,6 +1,6 @@
 ---
 title: Hackatime
-order: 4
+order: 12
 section: Building
 description: How Hackatime tracks your project hours in Cubed.
 ---

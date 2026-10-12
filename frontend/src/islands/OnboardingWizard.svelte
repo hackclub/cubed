@@ -104,7 +104,15 @@
           heardAboutDetail: heardAboutDetail.trim() || undefined,
         }),
       });
-      if (!res.ok) throw new Error("request failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (body.error === "nickname_taken") {
+          error = "That nickname is already taken. Try another one.";
+          submitting = false;
+          return;
+        }
+        throw new Error("request failed");
+      }
       // navigate() (Astro's client router), not a raw location change —
       // the latter bypasses the transition system even with <ClientRouter />.
       await navigate("/dashboard");
@@ -127,8 +135,8 @@
       {#if step === 1}
         <h2 class="mb-8 text-4xl font-bold text-[#2e4a3d] sm:text-5xl">Welcome to Cubed!</h2>
         <p class="text-xl leading-relaxed text-black/80 sm:text-2xl">
-          Cubed is a Hackclub You Ship We Ship program where build science related projects and we ship you science related prizes.
-          Hack Club is the world's largest nonprofit movement of teenagers making cool projects. All of our events are completly free and open to any teen, over the world
+          Cubed is a Hack Club You Ship We Ship program where you build science related projects and we ship you science related prizes.
+          Hack Club is the world's largest nonprofit movement of teenagers making cool projects. All of our events are completely free and open to any teen, over the world
         </p>
       {:else if step === 2}
         <h2 class="mb-8 text-4xl font-bold text-[#2e4a3d] sm:text-5xl">How'd you hear about us?</h2>

@@ -67,12 +67,18 @@ draft → submitted → approved
   real-name/address/screenshot, collected at that exact moment) is pushed
   to Airtable as a submission record for a human reviewer. Nothing in the
   app can edit it from here on.
-- **`approved` / `rejected`** — both terminal, decided by a human reviewer
-  in Airtable, synced back on a timer (see [Airtable](#airtable)). There's
-  no "needs changes" state and no resubmit path — for something small and
-  fixable, the reviewer DMs the submitter on Slack directly and approves
-  the same Airtable record once it's fixed, rather than the app needing
-  to reset a review back to pending.
+- **`approved` / `rejected`** — decided by a human reviewer in Airtable,
+  synced back every few seconds (see [Airtable](#airtable)). Both are final.
+- **"need changes"** (a third reviewer outcome, not a project state) — the
+  reviewer sets Airtable's Status to `need changes` with a note. That attempt
+  is closed, the project goes back to `draft` with a banner showing the note,
+  and submitting again creates a new submission and a new Airtable record. A
+  project gets 3 attempts in total; "need changes" on the last one becomes a
+  final rejection. Use it for fixes that take roughly 30–60 minutes. For a
+  two-minute fix the reviewer just DMs the submitter on Slack and leaves the
+  status alone. `rejected` is for things that can't or won't be fixed (too much
+  AI, duplicate, off-theme), and a rejected project's Hackatime projects and
+  repo can't be reused by that person's other projects.
 
 ## Repository Structure
 
@@ -112,7 +118,7 @@ File-based routing under `frontend/src/pages/`:
 | Route | Purpose |
 |---|---|
 | `/` | Public landing page |
-| `/login`, `/login-blocked` | Hack Club Auth login kickoff; "you failed eligibility and never had an account" explainer |
+| `/login`, `/login-blocked`, `/age` | Hack Club Auth login kickoff; "you failed eligibility and never had an account" explainer; age screen for people who aren't ID verified yet |
 | `/onboarding` | One-time nickname + "how did you hear about us" wizard, required before anything else |
 | `/dashboard` | The whole logged-in app lives here — see [the dashboard room](#the-dashboard-room) |
 | `/blocked` | "You have an account but can't participate right now" explainer (banned/ineligible) |
@@ -180,7 +186,8 @@ Grouped by file, all mounted under `/api`:
 - **`/auth`** — `GET /login` (kicks off the Hack Club Auth OAuth2 flow),
   `GET /callback` (OAuth callback — creates the session, and for a
   brand-new Slack identity, runs the eligibility check *before* writing
-  any row), `POST /logout`. The first two carry a tighter rate limit than
+  any row), `POST /logout`, `POST /logout-all` (ends every session for the
+  user). Only a hash of the session token is stored. The first two carry a tighter rate limit than
   the global default, since they're the routes worth brute-forcing.
 - **`/me`** — `GET /` (current user), `PATCH /` (nickname), `POST
   /onboarding`, `GET /hackatime-projects` (proxies the live Hackatime
@@ -192,16 +199,22 @@ Grouped by file, all mounted under `/api`:
   Zod validation, real-name/address/screenshot collected fresh and
   forwarded straight to Airtable, never stored), `POST /:id/photo` / 
   `DELETE /:id/photo` (showcase photo, via Hack Club's CDN).
-- **`/gallery`** — `GET /` (browseable project list — logged-in only via
-  frontend routing, not `requireAuth` itself), `POST /:id/upvote`
-  (idempotent toggle), `POST /:id/view` (undeduplicated view counter).
+- **`/gallery`** — `GET /` (paginated, 24/page; `q`, `status`, `sort`,
+  `userId`, `page` — only draft/submitted/approved projects (never rejected) that aren't hidden or
+  owned by someone who isn't ID verified or is banned; every gallery route requires a login), `GET /:id` (one project, for deep links), `POST
+  /:id/upvote` (idempotent toggle), `POST /:id/view` (undeduplicated counter).
 - **`/shop`** — `GET /` (active items), `GET /orders` (a user's own order
-  history), `POST /:id/buy` (live eligibility re-check, then a
-  transactional balance-check + debit + order row), `POST
-  /orders/:id/fulfillment` (shipping info — collected fresh, forwarded
-  straight to Airtable, never stored).
+  history), `POST /:id/buy` (live eligibility re-check, then: a short
+  transaction takes the moles and records a pending order; the Airtable
+  fulfillment record is created with no DB connection held; the order is marked
+  placed. Shipping info arrives in the same request, is forwarded straight to
+  Airtable, and is never stored — if the Airtable write fails the moles are
+  refunded, and a crash in between is settled by `jobs/maintenance.ts`).
 - **`/admin`** / **`/internal`** — announcement CRUD, dashboard stats,
-  signup analytics, and two manual trigger routes
+  signup analytics, the audit trail (`GET /admin/audit`, page `/admin/audit`),
+  gallery moderation (`PATCH /projects/:id/hidden`,
+  `DELETE /projects/:id/photo`, `POST /users/:id/reset-nickname`), and two
+  manual trigger routes
   (`POST /internal/sync/airtable`, `POST /internal/sync/eligibility`) for
   an immediate re-run instead of waiting for the next scheduled tick. All
   admin-only (`requireAuth` + `requireAdmin`).
@@ -210,9 +223,10 @@ Grouped by file, all mounted under `/api`:
 
 ### Economy
 
-`transactions` is the only source of truth for a balance — it's
-append-only, and a balance only ever changes inside the same DB
-transaction as a ledger row explaining why. Moles are earned in exactly
+`transactions` is the append-only ledger, and `users.moles_balance` is the
+running total the app reads and writes. The two are kept consistent by
+rule: a balance only ever changes inside the same DB transaction as a
+ledger row explaining why (and the DB refuses a negative balance). Moles are earned in exactly
 one place (the Airtable sync job, when a submission's reviewer status is
 a plain `"Approved"`) and spent in exactly one place (`POST
 /shop/:id/buy`). `moles = floor(approvedHours × 5)`, where a reviewer
@@ -227,17 +241,21 @@ local status is `pending`.
 ### Eligibility gating
 
 A logged-in user can still be blocked from participating for reasons
-unrelated to the manual, admin-only `isBanned` flag: a Hackatime ban
+unrelated to the manual `isBanned` flag: a Hackatime ban
 (`trust_level: "red"` from Hackatime's public trust-factor API) or a
-failing/incomplete Hack Club Auth YSWS verification result. Both are
-checked once at login, then **live** (not on a schedule) at the two
-points where it actually matters — submitting a project and buying from
-the shop — via `lib/eligibility-check.ts`'s `checkEligibilityLive()`,
-which persists whatever fresh result it gets before deciding, so a
-newly-banned user is blocked on that exact request and stays correctly
-gated on their very next page load too. A brand-new Slack identity that
-fails the check on its very first login never gets a user row or session
-at all. See the "Eligibility gating" section of [`CLAUDE.md`](CLAUDE.md)
+rejected / over-18 Hack Club Auth YSWS result. Those hard-block. Someone
+who simply isn't ID verified yet (`needs_submission`, `pending`,
+`not_found`) is NOT blocked: they get a read-only account (projects, Hackatime,
+photos and nickname work; submit, buy and upvote answer 403 `not_verified`),
+a banner, and a `user_not_idv` Airtable role. New unverified people answer
+an age screen first: 12-or-under / 19+ store nothing at all, 13–18 creates the
+account. If Hack Club Auth can't answer for a new person, no account is made.
+Everything is checked once at login, then **live** (not on a schedule) at the
+two points where it matters — submitting a project and buying from the shop —
+via `lib/eligibility-check.ts`'s `checkEligibilityForGate()`, which persists
+whatever fresh result it gets before deciding, so a newly-banned user is
+blocked on that exact request. A brand-new Slack identity that is hard-blocked
+on its very first login never gets a user row or session at all. See the "Eligibility gating" section of [`CLAUDE.md`](CLAUDE.md)
 for the full rationale and the frontend-side redirect logic.
 
 ### Database
@@ -258,11 +276,39 @@ request.
 Airtable is the external system of record for review decisions and
 shop fulfillment — not a cache, and not something the app can treat as
 live shared state. A scheduled job (`jobs/airtable-sync.ts`, interval set
-by `AIRTABLE_SYNC_INTERVAL_MINUTES`) pushes nothing — it only *reads* 
-pending submissions back out of Airtable and applies the result (credit
-moles, flip project status) to Postgres. The app has no admin/user UI for
-viewing shop fulfillment status, on purpose — that answer lives in
-Airtable exclusively.
+by `AIRTABLE_SYNC_INTERVAL_SECONDS`, default 10) pushes nothing — it only
+*reads* pending submissions back out of Airtable and applies the result
+(credit moles, flip project status) to Postgres. It also mirrors the shop
+catalog; items deleted in Airtable are deactivated so they stop being buyable.
+The app has no admin/user UI for viewing shop fulfillment status, on purpose —
+that answer lives in Airtable exclusively.
+
+**Rate limits.** Every Airtable request is paced at least 220 ms apart (about 4.5 per
+second, in memory, one instance) so bursts queue instead of failing. Airtable allows about 5 requests per second per base and
+rejects everything for ~30 seconds after exceeding it. Pending submissions are
+fetched in batches of 50 (one request per 50, not one each), so a sync run costs
+1–2 requests however many are waiting. After any 429 the backend pauses every
+background sync for 30 seconds and fails user submits/buys fast with a
+"try again" message.
+
+**The submission table.** Each submission is written as one record. Besides the
+standard YSWS fields it carries Cubed's own: `ai_declaration`,
+`tutorial_declaration`, `user_reviewer_notes`, `user_slack_id`, and a
+`Submission History` summary (which attempt this is, earlier attempts, and the
+person's other projects). Extra fields are ignored by Hack Club's "Submit to
+Unified YSWS" automation, which only reads the fields it names. Reviewers
+should fill `Optional - Override Hours Spent` (it is also what Cubed pays
+moles from) before setting Status to Approved.
+
+**The Users table.** `jobs/users-sync.ts` mirrors every user into an Airtable
+"Users" table and lets the team control access from it: the `role` column
+(`user` | `user_not_idv` | `admin` | `banned`) sets admin and ban status in the app within about
+30 seconds, `ban_reason` is the team's internal note, and `block_reason` is
+written by Cubed with the automatic reason (Hackatime ban, over 18, ...). A row
+exists only for someone who already has an account. If Airtable can't be read or
+a role is blank, nothing changes. Anyone who can edit that table can make anyone
+an admin, so keep its access limited. A banned person sees the "Account
+suspended" page.
 
 ## External integrations
 
@@ -285,8 +331,9 @@ based — see `backend/src/integrations/`:
 ## Security model
 
 - Session: an opaque, random (`randomBytes(32)`) token in a `cubed_session`
-  **httpOnly** cookie, looked up against a `sessions` table — never a JWT,
-  nothing client-readable.
+  **httpOnly** cookie. The database stores only the SHA-256 of the token
+  (so a leaked DB can't be replayed), and a ban or "Sign out everywhere"
+  deletes the user's sessions. Never a JWT, nothing client-readable.
 - CSRF: every mutating request must carry an `X-Requested-With` header,
   enforced globally in `middleware/csrf.ts` ahead of every route mount.
 - CORS: an explicit origin allowlist (`FRONTEND_ORIGINS`), never `*`.
@@ -294,9 +341,15 @@ based — see `backend/src/integrations/`:
   `/auth/login` + `/auth/callback`. Defense-in-depth only — double-submit
   and double-spend are independently prevented by the project status
   check and a row lock in the buy transaction, with or without a limiter.
-- Security headers (`middleware/security-headers.ts`): a restrictive,
-  `'self'`-only CSP, `X-Frame-Options: DENY`, HSTS, and a locked-down
-  Permissions-Policy.
+- Security headers: the backend (`middleware/security-headers.ts`) sends a
+  restrictive `'self'`-only CSP, `X-Frame-Options: DENY`, HSTS and a
+  locked-down Permissions-Policy on API responses. The frontend's
+  middleware sets `frame-ancestors 'none'`, `X-Frame-Options`, HSTS and
+  `nosniff` on pages; in production it also sends a page CSP (`default-src 'self'`,
+  `connect-src` limited to the API origin, `object-src 'none'`, ...). Its
+  `script-src` still allows `'unsafe-inline'` because Astro's island
+  hydration and `<ClientRouter />` are inline (Astro's hash-based CSP doesn't
+  support `<ClientRouter />`).
 - All SQL goes through Drizzle's query builder or parameterized `sql`
   tagged templates — never string-concatenated SQL.
 
@@ -365,6 +418,22 @@ npm run db:studio     # Drizzle Studio, a GUI over the local database
 Never hand-edit a generated migration or the data model elsewhere —
 `backend/src/db/schema.ts` + the files under `backend/drizzle/` are the
 only source of truth.
+
+### Deploying
+
+- Run migrations BEFORE starting the new backend version: `node dist/db/migrate.js` from the
+  backend image (or `npm run db:migrate` from source). The image does not do it for you.
+- Backend env: `NODE_ENV=production`, `TRUSTED_PROXIES`, `COOKIE_SIGNING_SECRET` (32+ chars),
+  https URLs everywhere (see `backend/.env.example`); it refuses to start otherwise.
+- Frontend: `PUBLIC_BACKEND_URL` is a Docker BUILD arg (baked into the browser bundle);
+  `BACKEND_URL` is a normal runtime variable. Serve frontend and backend from ONE host
+  (for example `/api` routed to the backend) so the host-only session cookie works.
+- Health: backend `/api/livez` (process up, never touches the database) and `/api/readyz`
+  (database reachable); frontend `/healthz`. None of them are rate limited.
+- On SIGTERM the backend lets in-flight requests finish for up to 25 s; give the container a
+  stop grace period of at least 30 s.
+- Every page response is `Cache-Control: no-store` (pages differ per person); only `/_astro/*`
+  build assets are cacheable.
 
 ## Contributing
 

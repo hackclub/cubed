@@ -8,14 +8,21 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { projects, submissions } from "../db/schema.js";
-import { requireAuth, type SessionContext } from "../lib/session.js";
-import { createRecord, uploadAttachment } from "../integrations/airtable.js";
+import { requireAuth, requireNotBlocked, type SessionContext } from "../lib/session.js";
+import { MAX_DRAFTS_PER_USER, MAX_SUBMISSION_ATTEMPTS, takePhotoUploadSlot } from "../lib/limits.js";
+import { findHoursOverlaps } from "../lib/hours-overlap.js";
+import { deleteOrQueue, queueSubmissionSweep, submissionMarker } from "../lib/airtable-cleanup.js";
+import { findRejectedReuse } from "../lib/reuse-block.js";
+import { buildSubmissionHistory } from "../lib/submission-history.js";
+import { MAX_HACKATIME_PROJECTS, namesFromFormatted, verifyHackatimeProjects } from "../lib/hackatime-selection.js";
+import { createRecord, isDefiniteFailure, uploadAttachment } from "../integrations/airtable.js";
 import { uploadProjectPhoto, deleteProjectPhoto } from "../integrations/hackclub-cdn.js";
-import { checkEligibilityLive } from "../lib/eligibility-check.js";
+import { checkEligibilityForGate } from "../lib/eligibility-check.js";
 import { config } from "../config.js";
+import { text } from "../lib/text.js";
 
 // Explicit allowlist, not `select *` — avoids leaking columns like user_id.
 const projectColumns = {
@@ -26,6 +33,7 @@ const projectColumns = {
   demoUrl: projects.demoUrl,
   hackatimeProjectsAndDates: projects.hackatimeProjectsAndDates,
   hackatimeUserId: projects.hackatimeUserId,
+  hackatimeSeconds: projects.hackatimeSeconds,
   photoUrl: projects.photoUrl,
   status: projects.status,
   // Plain column, unlike upvoteCount below — cheap enough for every response.
@@ -65,15 +73,17 @@ const DESCRIPTION_MAX = 550;
 const httpUrlSchema = z.string().url().refine((v) => /^https?:\/\//i.test(v), "Must be an http(s) URL");
 
 const createProjectSchema = z.object({
-  name: z.string().trim().min(TITLE_MIN).max(TITLE_MAX),
-  description: z.string().trim().min(DESCRIPTION_MIN).max(DESCRIPTION_MAX),
+  name: text(TITLE_MIN, TITLE_MAX),
+  description: text(DESCRIPTION_MIN, DESCRIPTION_MAX, true),
   // Empty string from the form is normalized to undefined (stored as NULL).
   repoUrl: httpUrlSchema.optional().or(z.literal("")).transform((v) => v || undefined),
   demoUrl: httpUrlSchema.optional().or(z.literal("")).transform((v) => v || undefined),
   // Set from HackatimeProjectPicker.svelte while still a draft — required
-  // before submit (checked in handleSubmission below), not collected again there.
-  hackatimeProjectsAndDates: z.string().trim().max(2000).optional().or(z.literal("")).transform((v) => v || undefined),
-  hackatimeUserId: z.string().trim().max(50).optional().or(z.literal("")).transform((v) => v || undefined),
+  // before submit (checked in handleSubmission below). Verified server-side
+  // against the caller's own Hackatime account on PATCH; the Hackatime user
+  // ID is never accepted from the client (resolved from that same lookup).
+  // Project NAMES only — the dates are fixed server-side, never client-chosen.
+  hackatimeProjects: z.array(z.string().trim().min(1).max(200)).max(MAX_HACKATIME_PROJECTS).optional(),
 });
 
 const patchProjectSchema = createProjectSchema.partial();
@@ -83,32 +93,53 @@ const patchProjectSchema = createProjectSchema.partial();
 // persisted. first/last name is re-collected rather than reusing Hack Club
 // Auth's login name — that's legal identity too, kept separate from the
 // account's own nickname.
+// Unicode letters/marks so José, O'Brien, Mary-Jane and non-Latin names go
+// through unchanged — these become the legal name on verification/shipping.
+const NAME_REGEX = /^[\p{L}\p{M} .'’-]+$/u;
+const NAME_ERROR = "Only letters, spaces, hyphens, apostrophes and periods are allowed";
+
 const submissionTextSchema = z.object({
-  firstName: z.string().trim().min(1).max(100).regex(/^[A-Za-z ]+$/, "Only letters and spaces are allowed"),
-  lastName: z.string().trim().min(1).max(100).regex(/^[A-Za-z ]+$/, "Only letters and spaces are allowed"),
+  firstName: z.string().trim().min(1).max(100).regex(NAME_REGEX, NAME_ERROR),
+  lastName: z.string().trim().min(1).max(100).regex(NAME_REGEX, NAME_ERROR),
   // Email/description/repoUrl/demoUrl aren't collected here — read straight
   // from user/project below so the submission can't silently diverge from them.
-  addressLine1: z.string().trim().min(1).max(200),
-  addressLine2: z.string().trim().max(200).optional(),
-  city: z.string().trim().min(1).max(100),
-  stateProvince: z.string().trim().min(1).max(100),
-  country: z.string().trim().min(1).max(100),
-  zip: z.string().trim().min(1).max(20),
+  addressLine1: text(1, 200),
+  addressLine2: text(0, 200).optional(),
+  city: text(1, 100),
+  stateProvince: text(1, 100),
+  country: text(1, 100),
+  zip: text(1, 20),
   // Plain YYYY-MM-DD passthrough to Airtable — parsing to Date risks timezone shifts.
-  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD"),
-  githubUsername: z.string().trim().min(1).max(100),
+  // Must also be a real calendar date that isn't in the future: Airtable's date field
+  // rejects e.g. 2010-02-31, which would fail the whole submission.
+  birthday: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD")
+    .refine((v) => {
+      const [y, m, d] = v.split("-").map(Number);
+      const date = new Date(Date.UTC(y, m - 1, d));
+      const real = date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+      return real && v <= new Date().toISOString().slice(0, 10);
+    }, "Enter a real date of birth that isn't in the future"),
+  githubUsername: text(1, 100),
   // Optional feedback fields Cubed added on top of the required YSWS fields.
-  howHeard: z.string().trim().max(1000).optional(),
-  doingWell: z.string().trim().max(2000).optional(),
-  improve: z.string().trim().max(2000).optional(),
+  howHeard: text(0, 1000, true).optional(),
+  doingWell: text(0, 2000, true).optional(),
+  improve: text(0, 2000, true).optional(),
   // Sent as string "true"/"false" (multipart body) rather than checkbox
   // presence. aiDetails is required only when usedAi is true — enforced via
   // superRefine below.
   usedAi: z.enum(["true", "false"]).transform((v) => v === "true"),
-  aiDetails: z.string().trim().max(2000).optional(),
+  aiDetails: text(0, 2000, true).optional(),
+  // Mandatory yes/no (no default, so an old client that omits it is rejected);
+  // when yes, the link and both explanations are required too.
+  usedTutorial: z.enum(["true", "false"]).transform((v) => v === "true"),
+  tutorialLink: text(0, 500).optional(),
+  tutorialHowClose: text(0, 2000, true).optional(),
+  tutorialUnique: text(0, 2000, true).optional(),
   // Distinct from Airtable's own "Internal Review Notes" (reviewer-private,
   // never touched here) — this is the submitter's note to the reviewer.
-  reviewerNotes: z.string().trim().max(2000).optional(),
+  reviewerNotes: text(0, 2000, true).optional(),
 }).superRefine((data, ctx) => {
   if (data.usedAi && !data.aiDetails?.trim()) {
     ctx.addIssue({
@@ -116,6 +147,25 @@ const submissionTextSchema = z.object({
       path: ["aiDetails"],
       message: "Please describe where and how much AI was used",
     });
+  }
+  if (data.usedTutorial) {
+    if (!data.tutorialLink || !httpUrlSchema.safeParse(data.tutorialLink).success) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tutorialLink"], message: "Please link the tutorial (http or https)" });
+    }
+    if (!data.tutorialHowClose?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tutorialHowClose"],
+        message: "Please describe how closely you followed the tutorial",
+      });
+    }
+    if (!data.tutorialUnique?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tutorialUnique"],
+        message: "Please describe what you added or did yourself beyond the tutorial",
+      });
+    }
   }
 });
 
@@ -152,11 +202,26 @@ const submissionBodyLimit = bodyLimit({ maxSize: 6 * 1024 * 1024 });
 const MAX_PROJECT_PHOTO_BYTES = 10 * 1024 * 1024;
 const projectPhotoBodyLimit = bodyLimit({ maxSize: 11 * 1024 * 1024 });
 
+// The YSWS submission guidelines say a screenshot can't be animated (no GIFs). Animation
+// also hides inside WebP (VP8X animation flag) and PNG (an "acTL" chunk, i.e. APNG).
+async function isAnimatedImage(file: File, sniffed: string): Promise<boolean> {
+  if (sniffed === "image/gif") return true;
+  const head = Buffer.from(await file.slice(0, 64 * 1024).arrayBuffer());
+  if (sniffed === "image/webp") {
+    return head.toString("ascii", 12, 16) === "VP8X" && (head[20] & 0x02) !== 0;
+  }
+  if (sniffed === "image/png") {
+    return head.indexOf("acTL", 8, "ascii") !== -1;
+  }
+  return false;
+}
+
 // Shared by handleSubmission() and the photo routes below.
 async function validateImageField(
   value: unknown,
   fieldName: string,
   maxBytes: number = MAX_IMAGE_BYTES,
+  options: { stillOnly?: boolean } = {},
 ): Promise<{ ok: true; file: File } | { ok: false; error: string }> {
   if (!(value instanceof File)) {
     return { ok: false, error: `${fieldName} is required` };
@@ -172,6 +237,9 @@ async function validateImageField(
   const sniffed = await sniffImageType(value);
   if (!sniffed || !ALLOWED_IMAGE_TYPES.has(sniffed)) {
     return { ok: false, error: `${fieldName} isn't a valid image file` };
+  }
+  if (options.stillOnly && (await isAnimatedImage(value, sniffed))) {
+    return { ok: false, error: `Your ${fieldName} can't be a GIF or any animated image. Use a still PNG, JPEG or WebP.` };
   }
   return { ok: true, file: value };
 }
@@ -190,21 +258,43 @@ projectRoutes.get("/", requireAuth, async (c) => {
   return c.json(rows);
 });
 
-projectRoutes.post("/", requireAuth, zValidator("json", createProjectSchema), async (c) => {
+projectRoutes.post("/", requireAuth, requireNotBlocked, bodyLimit({ maxSize: 100 * 1024 }), zValidator("json", createProjectSchema), async (c) => {
   const user = c.get("user")!;
   const input = c.req.valid("json");
 
-  const [row] = await db
-    .insert(projects)
-    .values({
-      userId: user.id,
-      name: input.name,
-      description: input.description,
-      repoUrl: input.repoUrl,
-      demoUrl: input.demoUrl,
-      // status defaults to "draft" (see schema.ts) — not set explicitly here.
-    })
-    .returning(projectColumns);
+  // A rejected project is final — its repo can't be reused by a new project.
+  const reuse = await findRejectedReuse(user.id, null, { repoUrl: input.repoUrl });
+  if (reuse) {
+    return c.json({ error: "reused_rejected", kind: reuse.kind }, 409);
+  }
+
+  // The per-user lock makes "count the drafts, then insert" atomic, so two parallel
+  // requests can't both slip under the limit.
+  const row = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${user.id}))`);
+
+    const [{ drafts }] = await tx
+      .select({ drafts: sql<number>`count(*)::int` })
+      .from(projects)
+      .where(and(eq(projects.userId, user.id), eq(projects.status, "draft")));
+    if (drafts >= MAX_DRAFTS_PER_USER) return null;
+
+    const [created] = await tx
+      .insert(projects)
+      .values({
+        userId: user.id,
+        name: input.name,
+        description: input.description,
+        repoUrl: input.repoUrl,
+        demoUrl: input.demoUrl,
+        // status defaults to "draft" (see schema.ts) — not set explicitly here.
+      })
+      .returning(projectColumns);
+    return created;
+  });
+  if (!row) {
+    return c.json({ error: "draft_limit" }, 409);
+  }
 
   return c.json(row, 201);
 });
@@ -252,14 +342,14 @@ projectRoutes.get("/:id/submissions", requireAuth, async (c) => {
   return c.json(rows);
 });
 
-projectRoutes.patch("/:id", requireAuth, zValidator("json", patchProjectSchema), async (c) => {
+projectRoutes.patch("/:id", requireAuth, requireNotBlocked, bodyLimit({ maxSize: 100 * 1024 }), zValidator("json", patchProjectSchema), async (c) => {
   const user = c.get("user")!;
   const id = c.req.param("id");
-  const input = c.req.valid("json");
+  const { hackatimeProjects: requestedHackatimeProjects, ...input } = c.req.valid("json");
 
   // Separate lookup so 404 vs "not editable" can be distinguished for the client.
   const existing = await db
-    .select({ status: projects.status })
+    .select({ status: projects.status, hackatimeProjectsAndDates: projects.hackatimeProjectsAndDates })
     .from(projects)
     .where(and(eq(projects.id, id), eq(projects.userId, user.id)));
 
@@ -272,11 +362,52 @@ projectRoutes.patch("/:id", requireAuth, zValidator("json", patchProjectSchema),
     return c.json({ error: "This project can't be edited right now" }, 409);
   }
 
+  if (input.repoUrl || (requestedHackatimeProjects && requestedHackatimeProjects.length > 0)) {
+    const reuse = await findRejectedReuse(user.id, id, {
+      repoUrl: input.repoUrl,
+      hackatimeNames: requestedHackatimeProjects,
+    });
+    if (reuse) {
+      return c.json({ error: "reused_rejected", kind: reuse.kind }, 409);
+    }
+  }
+
+  // Re-verified whenever a selection is sent, which also refreshes the tracked time.
+  // The user ID always comes from that lookup, never from the client.
+  let hackatimeFields:
+    | { hackatimeProjectsAndDates: string | null; hackatimeUserId: string | null; hackatimeSeconds: number | null }
+    | undefined;
+  if (requestedHackatimeProjects !== undefined) {
+    if (requestedHackatimeProjects.length === 0) {
+      hackatimeFields = { hackatimeProjectsAndDates: null, hackatimeUserId: null, hackatimeSeconds: null };
+    } else {
+      const verified = await verifyHackatimeProjects(user.slackId, requestedHackatimeProjects);
+      if (!verified.ok) {
+        return c.json({ error: verified.error }, verified.error === "hackatime_unavailable" ? 502 : 400);
+      }
+      hackatimeFields = {
+        hackatimeProjectsAndDates: verified.formatted,
+        hackatimeUserId: verified.hackatimeUserId,
+        hackatimeSeconds: verified.totalSeconds,
+      };
+    }
+  }
+
+  // status is re-checked in the WHERE itself: the lookup above and this write
+  // aren't atomic, so a submit landing in between must not let this edit through.
   const [row] = await db
     .update(projects)
-    .set({ ...input, updatedAt: new Date() })
-    .where(and(eq(projects.id, id), eq(projects.userId, user.id)))
+    .set({
+      ...input,
+      ...hackatimeFields,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(projects.id, id), eq(projects.userId, user.id), inArray(projects.status, [...EDITABLE_STATUSES])))
     .returning(projectColumns);
+
+  if (!row) {
+    return c.json({ error: "This project can't be edited right now" }, 409);
+  }
 
   return c.json(row);
 });
@@ -299,7 +430,26 @@ projectRoutes.delete("/:id", requireAuth, async (c) => {
     return c.json({ error: "Only draft projects can be deleted" }, 409);
   }
 
-  await db.delete(projects).where(and(eq(projects.id, id), eq(projects.userId, user.id)));
+  // A draft that already went through review (a "need changes" round) carries its
+  // attempt count and the reviewer's notes. Deleting it would erase both and hand out
+  // a fresh set of attempts, so it stays.
+  const [{ attempts }] = await db
+    .select({ attempts: sql<number>`count(*)::int` })
+    .from(submissions)
+    .where(eq(submissions.projectId, id));
+  if (attempts > 0) {
+    return c.json({ error: "has_submissions" }, 409);
+  }
+
+  // Status re-checked in the DELETE itself: a submit landing between the check above
+  // and this statement must not let a submitted project be deleted.
+  const deleted = await db
+    .delete(projects)
+    .where(and(eq(projects.id, id), eq(projects.userId, user.id), eq(projects.status, "draft")))
+    .returning({ id: projects.id });
+  if (deleted.length === 0) {
+    return c.json({ error: "Only draft projects can be deleted" }, 409);
+  }
 
   // Best-effort — the project row is already gone either way, so a CDN
   // failure here just leaves one orphaned file, not worth failing the request over.
@@ -329,9 +479,9 @@ async function handleSubmission(c: Context<SessionContext>) {
   // ban). Also persists the fresh result, so this user's very next page
   // load is correctly gated to /blocked by middleware.ts even though this
   // request itself isn't a page load.
-  const blockReason = await checkEligibilityLive(user);
-  if (blockReason) {
-    return c.json({ error: "not_eligible", reason: blockReason }, 403);
+  const verdict = await checkEligibilityForGate(user);
+  if (verdict) {
+    return c.json(verdict.body, verdict.status);
   }
 
   const existing = await db
@@ -360,6 +510,37 @@ async function handleSubmission(c: Context<SessionContext>) {
     return c.json({ error: "missing_hackatime" }, 409);
   }
 
+  // Re-verified now, not trusted from the draft: the range's end date becomes
+  // the submission day, and the names must still exist on their account.
+  const hackatime = await verifyHackatimeProjects(user.slackId, namesFromFormatted(project.hackatimeProjectsAndDates));
+  if (!hackatime.ok) {
+    return c.json({ error: hackatime.error }, hackatime.error === "hackatime_unavailable" ? 502 : 409);
+  }
+
+  // Same rule as when picking them, re-checked now in case a project was
+  // rejected after this draft was set up.
+  const reuse = await findRejectedReuse(user.id, project.id, {
+    repoUrl: project.repoUrl,
+    hackatimeNames: namesFromFormatted(project.hackatimeProjectsAndDates),
+  });
+  if (reuse) {
+    return c.json({ error: "reused_rejected", kind: reuse.kind }, 409);
+  }
+
+  // The same Hackatime hours can't be paid twice: refuse when a project of theirs that is
+  // pending review or approved already uses one of these Hackatime projects. Other overlaps
+  // (drafts) go to the reviewer in the submission history below.
+  const overlaps = await findHoursOverlaps(user.id, project.id, namesFromFormatted(project.hackatimeProjectsAndDates));
+  const inUse = overlaps.find((overlap) => overlap.blocking);
+  if (inUse) {
+    return c.json({ error: "hours_in_use", hackatimeProject: inUse.hackatimeProject, projectName: inUse.projectName }, 409);
+  }
+
+  const history = await buildSubmissionHistory(user.id, project.id, overlaps);
+  if (history.attemptNumber > MAX_SUBMISSION_ATTEMPTS) {
+    return c.json({ error: "attempt_limit" }, 409);
+  }
+
   // multipart/form-data, not JSON, because of the screenshot file.
   const body = await c.req.parseBody();
 
@@ -369,7 +550,7 @@ async function handleSubmission(c: Context<SessionContext>) {
   }
   const input = parsed.data;
 
-  const screenshot = await validateImageField(body.screenshot, "screenshot");
+  const screenshot = await validateImageField(body.screenshot, "screenshot", MAX_IMAGE_BYTES, { stillOnly: true });
   if (!screenshot.ok) {
     return c.json({ error: screenshot.error }, 400);
   }
@@ -385,7 +566,33 @@ async function handleSubmission(c: Context<SessionContext>) {
   // previous update was submitted"), so pre-filling them from the
   // submitter's own Hackatime data is a conscious choice, not an oversight
   // — the reviewer still sees and can correct whatever's filled in here.
-  let airtableRecordId: string;
+  // Claim the project BEFORE touching Airtable: the draft check above and the
+  // status flip used to be separated by two slow Airtable calls, so two quick
+  // clicks (or two tabs) both passed it and each created an Airtable record
+  // full of PII. Only one request can win this conditional update.
+  // The overlap check is repeated inside the claim, under a per-user lock: two projects that
+  // share a Hackatime project, submitted at the same moment, would otherwise each see the other
+  // as a draft and both go through.
+  const claim = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${user.id}))`);
+    const lockedOverlaps = await findHoursOverlaps(user.id, project.id, namesFromFormatted(project.hackatimeProjectsAndDates!), tx);
+    const blocked = lockedOverlaps.find((overlap) => overlap.blocking);
+    if (blocked) return { ok: false as const, blocked };
+    const rows = await tx
+      .update(projects)
+      .set({ status: "submitted", hackatimeSeconds: hackatime.totalSeconds, updatedAt: new Date() })
+      .where(and(eq(projects.id, project.id), eq(projects.userId, user.id), eq(projects.status, "draft")))
+      .returning({ id: projects.id });
+    return { ok: rows.length > 0, blocked: undefined };
+  });
+  if (claim.blocked) {
+    return c.json({ error: "hours_in_use", hackatimeProject: claim.blocked.hackatimeProject, projectName: claim.blocked.projectName }, 409);
+  }
+  if (!claim.ok) {
+    return c.json({ error: "Project must be a draft to do this" }, 409);
+  }
+
+  let airtableRecordId: string | undefined;
   try {
     airtableRecordId = await createRecord(config.airtable.submissionsTableId, {
       project_name: project.name,
@@ -403,17 +610,36 @@ async function handleSubmission(c: Context<SessionContext>) {
       Country: input.country,
       "ZIP / Postal Code": input.zip,
       Birthday: input.birthday,
-      "Justification - Hackatime Project Name(s) + Date Range(s)": project.hackatimeProjectsAndDates,
-      "Justification - Submitter Hackatime ID": project.hackatimeUserId,
+      "Justification - Hackatime Project Name(s) + Date Range(s)": hackatime.formatted,
+      "Justification - Submitter Hackatime ID": hackatime.hackatimeUserId,
       "How did you hear about this?": input.howHeard ?? "",
       "What are we doing well?": input.doingWell ?? "",
       "How can we improve?": input.improve ?? "",
       // No separate AI checkbox field on the real table — collapsed into one
       // string (details, or "Not used") to match.
       ai_declaration: input.usedAi ? input.aiDetails! : "Not used",
+      tutorial_declaration: input.usedTutorial
+        ? [
+            `Tutorial: ${input.tutorialLink}`,
+            `How closely followed: ${input.tutorialHowClose}`,
+            `What they added themselves: ${input.tutorialUnique}`,
+          ].join("\n")
+        : "Not used",
+      // The trailing marker lets a record be found again if Airtable created it but we never heard back.
+      "Submission History": `${history.text}\n\n${submissionMarker(project.id)}`,
       user_reviewer_notes: input.reviewerNotes ?? "",
       // Submitter's own Slack id — distinct from the reviewer-owned "reviewer_slack id".
       user_slack_id: user.slackId,
+    });
+
+    // The link to the Airtable record is saved right away, BEFORE the screenshot upload:
+    // if the process dies from here on, the submission still exists locally and the sync
+    // finds it, instead of leaving a locked project and an Airtable record nobody knows about.
+    // Only the Airtable record id is persisted — the form's PII never touches Postgres.
+    await db.insert(submissions).values({
+      projectId: project.id,
+      airtableRecordId,
+      status: "pending",
     });
 
     // Separate Airtable endpoint for attachments; the file only ever lives in memory.
@@ -427,26 +653,27 @@ async function handleSubmission(c: Context<SessionContext>) {
       screenshot.file.name,
     );
   } catch (err) {
-    // No retry queue (would mean address/birthday data sitting around).
-    // Status never left "draft" here, so the client can just call /submit again.
+    // No retry queue for the form data (would mean address/birthday data sitting around).
+    // Undo everything so the client can just call /submit again: remove the half-made
+    // Airtable record (it holds the person's address/birthday) and hand the project back
+    // as a draft. If Airtable can't be reached right now (a rate-limit pause), the record id
+    // is queued and deleted as soon as it can be, so the PII never lingers.
     console.error("Airtable submission failed", err instanceof Error ? err.message : err);
+    if (airtableRecordId) {
+      // Queued BEFORE the local row goes, so a crash in between can't orphan the record.
+      await deleteOrQueue(config.airtable.submissionsTableId, airtableRecordId);
+      await db.delete(submissions).where(eq(submissions.airtableRecordId, airtableRecordId));
+    } else if (!isDefiniteFailure(err)) {
+      // The create may have succeeded without us hearing back (timeout, 5xx): look for it by its
+      // marker over the next minutes and delete it if it exists.
+      await queueSubmissionSweep(project.id);
+    }
+    await db
+      .update(projects)
+      .set({ status: "draft", updatedAt: new Date() })
+      .where(and(eq(projects.id, project.id), eq(projects.userId, user.id), eq(projects.status, "submitted")));
     return c.json({ error: "Submission failed, please try again" }, 502);
   }
-
-  // Only the Airtable link + status flip are persisted — the form's PII
-  // never touches Postgres. One transaction keeps submissions/projects in sync.
-  await db.transaction(async (tx) => {
-    await tx.insert(submissions).values({
-      projectId: project.id,
-      airtableRecordId,
-      status: "pending",
-    });
-
-    await tx
-      .update(projects)
-      .set({ status: "submitted", updatedAt: new Date() })
-      .where(eq(projects.id, project.id));
-  });
 
   return c.json({ ...project, status: "submitted" as const, updatedAt: new Date() }, 200);
 }
@@ -454,21 +681,28 @@ async function handleSubmission(c: Context<SessionContext>) {
 projectRoutes.post("/:id/submit", requireAuth, submissionBodyLimit, handleSubmission);
 
 // Showcase photo — unrelated to the submission screenshot (never stored
-// here). No status check: changing it doesn't affect anything a reviewer is
-// currently looking at.
-projectRoutes.post("/:id/photo", requireAuth, projectPhotoBodyLimit, async (c) => {
+// here). Draft-only: it's public in the gallery, so it can't change after submit.
+projectRoutes.post("/:id/photo", requireAuth, requireNotBlocked, projectPhotoBodyLimit, async (c) => {
   const user = c.get("user")!;
   const id = c.req.param("id");
 
   // photoCdnId isn't in projectColumns (client doesn't need it) — needed
   // here to clean up the old file after a successful replace.
   const existing = await db
-    .select({ photoCdnId: projects.photoCdnId })
+    .select({ photoCdnId: projects.photoCdnId, status: projects.status })
     .from(projects)
     .where(and(eq(projects.id, id), eq(projects.userId, user.id)));
 
   if (existing.length === 0) {
     return c.json({ error: "Not found" }, 404);
+  }
+  // Locked once submitted: the photo is public (gallery) and swappable
+  // after approval would let someone replace what was reviewed.
+  if (existing[0].status !== "draft") {
+    return c.json({ error: "photo_locked" }, 409);
+  }
+  if (!takePhotoUploadSlot(user.id)) {
+    return c.json({ error: "too_many_uploads" }, 429);
   }
 
   const body = await c.req.parseBody();
@@ -488,8 +722,14 @@ projectRoutes.post("/:id/photo", requireAuth, projectPhotoBodyLimit, async (c) =
   const [row] = await db
     .update(projects)
     .set({ photoUrl: uploaded.url, photoCdnId: uploaded.cdnId, updatedAt: new Date() })
-    .where(and(eq(projects.id, id), eq(projects.userId, user.id)))
+    .where(and(eq(projects.id, id), eq(projects.userId, user.id), eq(projects.status, "draft")))
     .returning(projectColumns);
+
+  if (!row) {
+    // Submitted while the upload was in flight — don't leave the new file orphaned.
+    deleteProjectPhoto(uploaded.cdnId).catch(() => {});
+    return c.json({ error: "photo_locked" }, 409);
+  }
 
   // Best-effort, not awaited — the new photo is already live either way; a
   // failure here just leaves one orphaned CDN file.
@@ -510,12 +750,15 @@ projectRoutes.delete("/:id/photo", requireAuth, async (c) => {
   const id = c.req.param("id");
 
   const existing = await db
-    .select({ photoCdnId: projects.photoCdnId })
+    .select({ photoCdnId: projects.photoCdnId, status: projects.status })
     .from(projects)
     .where(and(eq(projects.id, id), eq(projects.userId, user.id)));
 
   if (existing.length === 0) {
     return c.json({ error: "Not found" }, 404);
+  }
+  if (existing[0].status !== "draft") {
+    return c.json({ error: "photo_locked" }, 409);
   }
   if (!existing[0].photoCdnId) {
     return c.json({ error: "This project doesn't have a photo" }, 404);
@@ -533,8 +776,12 @@ projectRoutes.delete("/:id/photo", requireAuth, async (c) => {
   const [row] = await db
     .update(projects)
     .set({ photoUrl: null, photoCdnId: null, updatedAt: new Date() })
-    .where(and(eq(projects.id, id), eq(projects.userId, user.id)))
+    .where(and(eq(projects.id, id), eq(projects.userId, user.id), eq(projects.status, "draft")))
     .returning(projectColumns);
+
+  if (!row) {
+    return c.json({ error: "photo_locked" }, 409);
+  }
 
   return c.json(row);
 });

@@ -1,14 +1,20 @@
 <script>
-  // `projects` is prefetched server-side (GET /gallery, already excludes
-  // rejected projects and every status/search/sort filter below is plain
-  // client-side filtering over that one array — no pagination on that
-  // endpoint). Selecting a card adds `?gallery=<id>` (or `?userId=<id>` for
-  // the "view this user's projects" mode below) so it's a shareable link.
+  // `projects` is only the FIRST page (24) of GET /gallery, prefetched
+  // server-side for the default view. Search, status filter, sort and the
+  // "view this user's projects" mode all run on the server (the list is
+  // paginated — "Load more" appends the next page), so this component never
+  // holds the whole gallery. Selecting a card adds `?gallery=<id>` (or
+  // `?userId=<id>` for the per-user mode) so it's a shareable link; a deep
+  // link to something outside the loaded pages is fetched on its own.
   import { apiFetch } from "../../lib/api-client";
   import PopupShell from "./PopupShell.svelte";
+  import { getContext } from "svelte";
+  import { ID_VERIFIED_CONTEXT, NOT_VERIFIED_MESSAGE } from "../../lib/verification";
+  import { formatHackatimeTime } from "../../lib/format";
 
   let {
     projects,
+    hasMore: initialHasMore = false,
     onClose,
     initialProjectId = null,
     onProjectSelected,
@@ -17,24 +23,23 @@
     onViewUserChanged,
   } = $props();
 
-  // Local mutable copy so an upvote updates in place without a re-fetch.
   let items = $state(projects.map((p) => ({ ...p })));
+  let hasMore = $state(initialHasMore);
+  let page = $state(1);
+  let loading = $state(false);
+  let loadError = $state("");
 
   let query = $state("");
   let statusFilter = $state("all");
   let sortBy = $state("recent");
   let selectedId = $state(initialProjectId);
+  // A deep-linked project that isn't in the loaded pages.
+  let extra = $state(null);
 
-  // "View all of this user's projects" (opened by clicking a submitter's
-  // pfp in the detail view). `items` already holds every non-rejected
-  // project across every user (the gallery endpoint isn't paginated), so
-  // this is a local filter, not a fresh fetch — works instantly and also
-  // survives a cold page-load straight into `?userId=`.
+  // "View all of this user's projects" (opened by clicking a submitter's pfp
+  // in the detail view) — the same server-side list, narrowed by userId.
   let viewingUserId = $state(initialViewUserId);
-  let userProjects = $derived(items.filter((p) => p.userId === viewingUserId));
-  // Null if that user currently has zero visible projects (e.g. a stale/
-  // shared link) — the one case where we can't show their nickname/avatar.
-  let viewingUserInfo = $derived(userProjects[0] ?? null);
+  let viewingUserInfo = $derived(items[0] ?? null);
 
   function viewUser(project) {
     viewingUserId = project.userId;
@@ -42,9 +47,10 @@
     select(null);
   }
 
+  // Rejected projects never appear in the gallery, so they aren't offered as a filter.
   const STATUS_OPTIONS = [
     { value: "all", label: "All" },
-    { value: "draft", label: "Draft" },
+    { value: "draft", label: "Drafts" },
     { value: "submitted", label: "Submitted" },
     { value: "approved", label: "Approved" },
   ];
@@ -67,11 +73,72 @@
     }
   }
 
+  // Only the latest request may write results, so a slow older response
+  // can't overwrite a newer search.
+  let fetchToken = 0;
+  async function load(reset) {
+    const token = ++fetchToken;
+    loading = true;
+    loadError = "";
+    const nextPage = reset ? 1 : page + 1;
+    const params = new URLSearchParams({ page: String(nextPage), sort: sortBy });
+    if (query.trim()) params.set("q", query.trim());
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (viewingUserId) params.set("userId", viewingUserId);
+    try {
+      const res = await apiFetch(`/gallery?${params}`);
+      if (!res.ok) throw new Error();
+      const body = await res.json();
+      if (token !== fetchToken) return;
+      items = reset ? body.items : [...items, ...body.items];
+      page = body.page;
+      hasMore = body.hasMore;
+    } catch {
+      if (token === fetchToken) loadError = "Couldn't load projects. Try again.";
+    } finally {
+      if (token === fetchToken) loading = false;
+    }
+  }
+
+  // Refetch whenever a filter changes (search is debounced). The prefetched
+  // first page already matches the default view, so the first run is skipped
+  // unless the popup opened straight into a user's projects.
+  let firstRun = true;
+  $effect(() => {
+    query;
+    statusFilter;
+    sortBy;
+    viewingUserId;
+    if (firstRun) {
+      firstRun = false;
+      if (!initialViewUserId) return;
+    }
+    const timer = setTimeout(() => load(true), query ? 300 : 0);
+    return () => clearTimeout(timer);
+  });
+
+  let triedDeepLink = false;
+  $effect(() => {
+    if (triedDeepLink || !initialProjectId) return;
+    triedDeepLink = true;
+    if (items.some((p) => p.id === initialProjectId)) return;
+    apiFetch(`/gallery/${initialProjectId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((project) => {
+        if (project) extra = project;
+      })
+      .catch(() => {});
+  });
+
+  function findProject(id) {
+    return items.find((p) => p.id === id) ?? (extra?.id === id ? extra : null);
+  }
+
   function select(id) {
     selectedId = id;
     onProjectSelected?.(id);
     if (id) {
-      const project = items.find((p) => p.id === id);
+      const project = findProject(id);
       if (project) {
         project.viewCount += 1;
         apiFetch(`/gallery/${id}/view`, { method: "POST" }).catch(() => {});
@@ -79,24 +146,18 @@
     }
   }
 
-  let filtered = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    const result = items.filter((p) => {
-      if (statusFilter !== "all" && p.status !== statusFilter) return false;
-      if (q && !p.name.toLowerCase().includes(q)) return false;
-      return true;
-    });
-    if (sortBy === "upvotes") {
-      result.sort((a, b) => b.upvoteCount - a.upvoteCount);
-    }
-    return result;
-  });
+  let selected = $derived(findProject(selectedId));
 
-  let selected = $derived(items.find((p) => p.id === selectedId) ?? null);
+  const idVerified = getContext(ID_VERIFIED_CONTEXT) !== false;
+  let notVerifiedNotice = $state(false);
 
   let upvoting = $state(false);
   async function toggleUpvote(project) {
     if (upvoting) return;
+    if (!idVerified) {
+      notVerifiedNotice = true;
+      return;
+    }
     upvoting = true;
     const wasUpvoted = project.viewerHasUpvoted;
     // reverted in the catch block if the request fails.
@@ -104,6 +165,7 @@
     project.upvoteCount += wasUpvoted ? -1 : 1;
     try {
       const res = await apiFetch(`/gallery/${project.id}/upvote`, { method: "POST" });
+      if (res.status === 403) notVerifiedNotice = true;
       if (!res.ok) throw new Error();
       const body = await res.json();
       project.viewerHasUpvoted = body.upvoted;
@@ -114,6 +176,57 @@
     } finally {
       upvoting = false;
     }
+  }
+
+  // ---- Admin moderation (the backend enforces admin-only; these buttons
+  // just aren't rendered for anyone else) ----
+  let moderationError = $state("");
+
+  async function moderate(request, apply) {
+    moderationError = "";
+    try {
+      const res = await request();
+      if (!res.ok) throw new Error();
+      apply(res.status === 204 ? null : await res.json());
+    } catch {
+      moderationError = "That didn't work. Please try again.";
+    }
+  }
+
+  function setHidden(project, hidden) {
+    return moderate(
+      () =>
+        apiFetch(`/admin/projects/${project.id}/hidden`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hidden }),
+        }),
+      () => {
+        project.hidden = hidden;
+      },
+    );
+  }
+
+  function removePhoto(project) {
+    if (!window.confirm("Remove this project's photo?")) return;
+    return moderate(
+      () => apiFetch(`/admin/projects/${project.id}/photo`, { method: "DELETE" }),
+      () => {
+        project.photoUrl = null;
+      },
+    );
+  }
+
+  function resetNickname(project) {
+    if (!window.confirm(`Reset ${project.nickname}'s nickname to a neutral one?`)) return;
+    return moderate(
+      () => apiFetch(`/admin/users/${project.userId}/reset-nickname`, { method: "POST" }),
+      (body) => {
+        for (const p of [...items, ...(extra ? [extra] : [])]) {
+          if (p.userId === project.userId) p.nickname = body.nickname;
+        }
+      },
+    );
   }
 </script>
 
@@ -153,11 +266,20 @@
             </div>
           {/if}
           <div class="flex flex-1 flex-col gap-1 p-3">
-            <span class={`w-fit rounded-none border border-[#5c4429]/40 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${statusColor(project.status)}`}>
-              {project.status}
-            </span>
+            <div class="flex flex-wrap gap-1">
+              <span class={`w-fit rounded-none border border-[#5c4429]/40 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${statusColor(project.status)}`}>
+                {project.status}
+              </span>
+              {#if project.hidden}
+                <span class="w-fit rounded-none border border-[#5c4429]/40 bg-app-orange px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">Hidden</span>
+              {/if}
+            </div>
             <h3 class="line-clamp-1 text-sm font-bold">{project.name}</h3>
             <p class="line-clamp-2 flex-1 text-xs text-black/60">{project.description}</p>
+            <p class="flex items-center gap-1 text-[11px] font-bold text-black/60" title="Time tracked on Hackatime">
+                <svg viewBox="0 0 24 24" class="h-3 w-3 fill-none stroke-current" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                {formatHackatimeTime(project.hackatimeSeconds)} on Hackatime
+              </p>
             <div class="mt-1 flex items-center justify-between gap-2">
               <p class="line-clamp-1 text-[11px] text-black/50">by {project.nickname}</p>
               <button
@@ -174,6 +296,26 @@
       </div>
     {/snippet}
 
+    {#if notVerifiedNotice}
+      <p class="mb-3 rounded-none border-2 border-[#5c4429] bg-app-orange/30 p-3 text-sm">{NOT_VERIFIED_MESSAGE}</p>
+    {/if}
+
+    {#snippet loadMore()}
+      {#if loadError}
+        <p class="mt-3 text-sm text-app-orange">{loadError}</p>
+      {/if}
+      {#if hasMore}
+        <button
+          type="button"
+          onclick={() => load(false)}
+          disabled={loading}
+          class="mt-4 cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-5 py-2 text-xs font-bold uppercase tracking-wide hover:bg-[#5c4429]/10 disabled:opacity-40"
+        >
+          {loading ? "Loading..." : "Load more"}
+        </button>
+      {/if}
+    {/snippet}
+
     {#if selected}
       <div class="flex flex-col gap-4">
         {#if selected.photoUrl}
@@ -185,9 +327,14 @@
         {/if}
         <div class="flex flex-wrap items-start justify-between gap-3">
           <h3 class="text-2xl font-bold">{selected.name}</h3>
-          <span class={`shrink-0 rounded-none border-2 border-[#5c4429]/40 px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${statusColor(selected.status)}`}>
-            {selected.status}
-          </span>
+          <div class="flex shrink-0 flex-wrap gap-2">
+            {#if selected.hidden}
+              <span class="rounded-none border-2 border-[#5c4429]/40 bg-app-orange px-2 py-0.5 text-xs font-bold uppercase tracking-wide">Hidden</span>
+            {/if}
+            <span class={`rounded-none border-2 border-[#5c4429]/40 px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${statusColor(selected.status)}`}>
+              {selected.status}
+            </span>
+          </div>
         </div>
         <p class="whitespace-pre-wrap text-black/80">{selected.description}</p>
         <div class="flex flex-wrap gap-4 text-sm">
@@ -228,6 +375,10 @@
               <svg viewBox="0 0 24 24" class="h-4 w-4 fill-none stroke-current" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z" /><circle cx="12" cy="12" r="3" /></svg>
               {selected.viewCount}
             </span>
+            <span class="flex items-center gap-1 rounded-none border border-[#5c4429]/30 bg-white px-2 py-0.5 text-sm font-bold text-black/70" title="Time tracked on Hackatime">
+                <svg viewBox="0 0 24 24" class="h-4 w-4 fill-none stroke-current" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                {formatHackatimeTime(selected.hackatimeSeconds)} on Hackatime
+              </span>
           </div>
           <button
             type="button"
@@ -238,6 +389,38 @@
             <span>{selected.upvoteCount}</span>
           </button>
         </div>
+
+        {#if isAdmin}
+          <div class="flex flex-wrap items-center gap-2 border-t-2 border-[#5c4429]/20 pt-4">
+            <span class="text-xs font-bold uppercase tracking-wide text-black/50">Moderate</span>
+            <button
+              type="button"
+              onclick={() => setHidden(selected, !selected.hidden)}
+              class="cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wide hover:bg-[#5c4429]/10"
+            >
+              {selected.hidden ? "Unhide project" : "Hide project"}
+            </button>
+            {#if selected.photoUrl}
+              <button
+                type="button"
+                onclick={() => removePhoto(selected)}
+                class="cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wide hover:bg-[#5c4429]/10"
+              >
+                Remove photo
+              </button>
+            {/if}
+            <button
+              type="button"
+              onclick={() => resetNickname(selected)}
+              class="cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wide hover:bg-[#5c4429]/10"
+            >
+              Reset nickname
+            </button>
+            {#if moderationError}
+              <span class="text-xs text-app-orange">{moderationError}</span>
+            {/if}
+          </div>
+        {/if}
       </div>
     {:else if viewingUserId}
       <div class="mb-4 flex items-center gap-3 border-b-2 border-[#5c4429]/20 pb-4">
@@ -253,15 +436,16 @@
         </h3>
       </div>
 
-      {#if userProjects.length === 0}
-        <p class="text-black/60">This user doesn't have any public projects yet.</p>
+      {#if items.length === 0}
+        <p class="text-black/60">{loading ? "Loading..." : "This user doesn't have any public projects yet."}</p>
       {:else}
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {#each userProjects as project (project.id)}
+          {#each items as project (project.id)}
             {@render projectCard(project)}
           {/each}
         </div>
       {/if}
+      {@render loadMore()}
     {:else}
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <input
@@ -298,15 +482,16 @@
         </div>
       </div>
 
-      {#if filtered.length === 0}
-        <p class="text-black/60">{items.length === 0 ? "Nothing here yet. Be the first!" : "No projects match."}</p>
+      {#if items.length === 0}
+        <p class="text-black/60">{loading ? "Loading..." : query || statusFilter !== "all" ? "No projects match." : "Nothing here yet. Be the first!"}</p>
       {:else}
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {#each filtered as project (project.id)}
+          {#each items as project (project.id)}
             {@render projectCard(project)}
           {/each}
         </div>
       {/if}
+      {@render loadMore()}
     {/if}
   {/snippet}
 </PopupShell>

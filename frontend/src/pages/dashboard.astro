@@ -17,11 +17,24 @@ const [announcementsRes, ownProjectsRes, shopItemsRes, shopOrdersRes, galleryRes
     serverApiFetch(Astro.request, "/me/transactions?page=1"),
   ]);
 
+// An empty list from a failed request would look like "you have nothing", so failures are named.
+const failedParts = [
+  [announcementsRes, "news"],
+  [ownProjectsRes, "your projects"],
+  [shopItemsRes, "the shop"],
+  [shopOrdersRes, "your orders"],
+  [galleryRes, "the gallery"],
+  [transactionsRes, "your moles history"],
+]
+  .filter(([res]) => !(res as Response).ok)
+  .map(([, name]) => name as string);
+
 const announcements = announcementsRes.ok ? await announcementsRes.json() : [];
 const ownProjects = ownProjectsRes.ok ? await ownProjectsRes.json() : [];
 const shopItems = shopItemsRes.ok ? await shopItemsRes.json() : [];
 const shopOrders = shopOrdersRes.ok ? await shopOrdersRes.json() : [];
-const galleryProjects = galleryRes.ok ? await galleryRes.json() : [];
+// First page only — GalleryPopup loads more, and runs search/sort/filter, on the server.
+const gallery = galleryRes.ok ? await galleryRes.json() : { items: [], hasMore: false };
 const initialTransactions = transactionsRes.ok ? await transactionsRes.json() : [];
 ---
 
@@ -35,12 +48,15 @@ const initialTransactions = transactionsRes.ok ? await transactionsRes.json() : 
       avatarUrl: user.avatarUrl,
       isAdmin: user.isAdmin,
       molesBalance: user.molesBalance,
+      idVerified: user.yswsStatus === "verified_eligible",
     }}
-    {galleryProjects}
+    galleryProjects={gallery.items}
+    galleryHasMore={gallery.hasMore}
     {ownProjects}
     {shopItems}
     {shopOrders}
     {announcements}
     {initialTransactions}
+    {failedParts}
   />
 </DashboardLayout>

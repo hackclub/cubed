@@ -1,36 +1,20 @@
 ---
-// Read-only, server rendered
+// Read-only, server rendered. Range comes from ?days= (7/30/60/90/180).
 import AdminLayout from "../../layouts/AdminLayout.astro";
+import Stat from "../../components/admin/Stat.astro";
+import BarSeries from "../../components/admin/BarSeries.astro";
+import HBars from "../../components/admin/HBars.astro";
 import { serverApiFetch } from "../../lib/api";
+import { fmtDuration, fmtHours } from "../../lib/format";
 
-const res = await serverApiFetch(Astro.request, "/admin/analytics?days=30");
-const data = res.ok
-  ? await res.json()
-  : {
-      signupsPerDay: [],
-      heardAbout: [],
-      heardAboutResponses: [],
-      projectsByStatus: [],
-      review: { approved: 0, rejected: 0, pending: 0, approvalRate: null, totalHoursFunded: 0, avgApprovedHours: 0 },
-      economy: { totalEarned: 0, totalSpent: 0, totalOutstanding: 0, totalOrders: 0, totalUnitsOrdered: 0 },
-      topShopItems: [],
-      onboarding: { totalUsers: 0, onboardedCount: 0 },
-    };
+const RANGES = [7, 30, 60, 90, 180];
+const requested = Number(Astro.url.searchParams.get("days"));
+const days = RANGES.includes(requested) ? requested : 30;
 
-const maxSignups = Math.max(1, ...data.signupsPerDay.map((d: any) => d.count));
+const res = await serverApiFetch(Astro.request, `/admin/analytics?days=${days}`);
+const data = res.ok ? await res.json() : null;
 
-function statusColor(status: string) {
-  switch (status) {
-    case "approved":
-      return "bg-app-mint";
-    case "rejected":
-      return "bg-app-orange";
-    case "submitted":
-      return "bg-app-lavender";
-    default:
-      return "bg-white";
-  }
-}
+const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
 const HEARD_ABOUT_LABELS: Record<string, string> = {
   friends_family: "Friends/Family",
@@ -41,27 +25,19 @@ const HEARD_ABOUT_LABELS: Record<string, string> = {
   school: "School",
   other: "Other",
 };
-
-const HEARD_ABOUT_COLORS: Record<string, string> = {
-  friends_family: "bg-app-mint",
-  instagram_youtube: "bg-app-lavender",
-  hackclub_site: "bg-app-gold",
-  slack: "bg-app-orange",
-  email: "bg-app-yellow",
-  school: "bg-[#8a6d4f]",
-  other: "bg-black/20",
-};
 const HEARD_ABOUT_ORDER = ["slack", "friends_family", "instagram_youtube", "hackclub_site", "email", "school", "other"];
+const sortSources = (rows: { source: string; count: number }[]) =>
+  [...rows].sort((a, b) => HEARD_ABOUT_ORDER.indexOf(a.source) - HEARD_ABOUT_ORDER.indexOf(b.source));
 
-const heardAboutTotal = data.heardAbout.reduce((sum: number, r: any) => sum + r.count, 0) || 1;
-const heardAboutSorted = [...data.heardAbout].sort(
-  (a: any, b: any) => HEARD_ABOUT_ORDER.indexOf(a.source) - HEARD_ABOUT_ORDER.indexOf(b.source),
-);
+const STATUS_TONE: Record<string, string> = {
+  approved: "bg-app-mint",
+  rejected: "bg-app-orange",
+  submitted: "bg-app-lavender",
+  draft: "bg-white",
+};
 
-const totalMoles = data.economy.totalEarned + data.economy.totalSpent || 1;
-const onboardedPct = data.onboarding.totalUsers
-  ? Math.round((data.onboarding.onboardedCount / data.onboarding.totalUsers) * 100)
-  : 0;
+const h2 = "mb-1 text-xl text-[#2e4a3d]";
+const sub = "mb-4 text-sm text-black/60";
 ---
 
 <AdminLayout title="Analytics" requireAdmin>
@@ -72,183 +48,299 @@ const onboardedPct = data.onboarding.totalUsers
     &larr; Back to Admin
   </a>
 
-  <h1 class="mb-8 text-3xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Analytics</h1>
-
-  <section class="mb-10">
-    <h2 class="mb-1 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Signups</h2>
-    <p class="mb-4 text-sm text-black/60">New accounts per day, last 30 days.</p>
-    <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-5">
-      <div class="flex h-40 items-end gap-1">
-        {data.signupsPerDay.map((d: any) => (
-          <div
-            class="group relative flex-1"
-            title={`${d.date}: ${d.count} signup${d.count === 1 ? "" : "s"}`}
-          >
-            <div
-              class="w-full rounded-t bg-app-mint transition-all group-hover:bg-app-gold"
-              style={`height: ${Math.max(3, (d.count / maxSignups) * 100)}%`}
-            />
-          </div>
-        ))}
-      </div>
-      <div class="mt-2 flex justify-between text-[10px] text-black/40">
-        <span>{data.signupsPerDay[0]?.date}</span>
-        <span>{data.signupsPerDay[data.signupsPerDay.length - 1]?.date}</span>
-      </div>
+  <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-3xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Metrics</h1>
+      <p class="text-sm text-black/60">Activity, onboarding and engagement signals. All times are UTC.</p>
     </div>
-  </section>
-
-  <section class="mb-10">
-    <h2 class="mb-1 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">How people heard about Cubed</h2>
-    <p class="mb-4 text-sm text-black/60">From onboarding step 3.</p>
-
-    <div class="mb-6 rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-5">
-      {heardAboutSorted.length === 0 ? (
-        <p class="text-sm text-black/50">No responses yet.</p>
-      ) : (
-        <div class="flex flex-col gap-2">
-          {heardAboutSorted.map((r: any) => (
-            <div class="flex items-center gap-3">
-              <span class="w-36 shrink-0 text-xs font-bold uppercase tracking-wide">
-                {HEARD_ABOUT_LABELS[r.source] ?? r.source}
-              </span>
-              <div class="h-4 flex-1 overflow-hidden rounded-full bg-white">
-                <div
-                  class={`h-full rounded-full ${HEARD_ABOUT_COLORS[r.source] ?? "bg-black/20"}`}
-                  style={`width: ${(r.count / heardAboutTotal) * 100}%`}
-                />
-              </div>
-              <span class="w-10 shrink-0 text-right text-xs font-bold">{r.count}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-
-    <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">
-      "Tell us more" responses ({data.heardAboutResponses.length})
-    </h3>
-    {data.heardAboutResponses.length === 0 ? (
-      <p class="text-sm text-black/50">Nobody's added extra detail yet.</p>
-    ) : (
-      <div class="flex max-h-80 flex-col gap-2 overflow-y-auto">
-        {data.heardAboutResponses.map((r: any) => (
-          <div class="rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] p-3">
-            <div class="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-black/50">
-              <span class="font-bold text-black">{r.nickname ?? "?"}</span>
-              <span>{HEARD_ABOUT_LABELS[r.source] ?? r.source} &middot; {new Date(r.createdAt).toLocaleDateString()}</span>
-            </div>
-            <p class="text-sm">{r.detail}</p>
-          </div>
-        ))}
-      </div>
-    )}
-  </section>
-
-  <section class="mb-10">
-    <h2 class="mb-4 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Projects by status</h2>
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
-      {data.projectsByStatus.map((r: any) => (
-        <div class={`rounded-none border-2 border-[#5c4429] p-4 text-center ${statusColor(r.status)}`}>
-          <p class="text-2xl font-bold">{r.count}</p>
-          <p class="text-xs font-bold uppercase tracking-wide">{r.status.replace("_", " ")}</p>
-        </div>
+    <div class="flex flex-wrap gap-2">
+      {RANGES.map((r) => (
+        <a
+          href={`?days=${r}`}
+          class={`rounded-none border-2 border-[#5c4429]/40 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-all ${r === days ? "bg-[#5c4429] text-white" : "bg-white hover:bg-[#5c4429]/10"}`}
+        >
+          {r}d
+        </a>
       ))}
     </div>
-  </section>
+  </div>
 
-  <section class="mb-10">
-    <h2 class="mb-1 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Review outcomes</h2>
-    <p class="mb-4 text-sm text-black/60">Pending is the actual review queue — everything else here has already been decided.</p>
-    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-      <div class="rounded-none border-2 border-[#5c4429] bg-app-mint p-4 text-center">
-        <p class="text-2xl font-bold">{data.review.approved}</p>
-        <p class="text-xs uppercase tracking-wide text-black/60">Approved</p>
-      </div>
-      <div class="rounded-none border-2 border-[#5c4429] bg-app-orange/50 p-4 text-center">
-        <p class="text-2xl font-bold">{data.review.rejected}</p>
-        <p class="text-xs uppercase tracking-wide text-black/60">Rejected</p>
-      </div>
-      <div class="rounded-none border-2 border-[#5c4429] bg-app-gold/40 p-4 text-center">
-        <p class="text-2xl font-bold">{data.review.pending}</p>
-        <p class="text-xs uppercase tracking-wide text-black/60">Pending review</p>
-      </div>
-    </div>
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <div class="rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] p-4 text-center">
-        <p class="text-2xl font-bold">{data.review.approvalRate === null ? "—" : `${data.review.approvalRate}%`}</p>
-        <p class="text-xs uppercase tracking-wide text-black/50">Approval rate</p>
-      </div>
-      <div class="rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] p-4 text-center">
-        <p class="text-2xl font-bold">{data.review.totalHoursFunded}</p>
-        <p class="text-xs uppercase tracking-wide text-black/50">Hours funded</p>
-      </div>
-      <div class="rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] p-4 text-center">
-        <p class="text-2xl font-bold">{data.review.avgApprovedHours.toFixed(1)}</p>
-        <p class="text-xs uppercase tracking-wide text-black/50">Avg hrs / approval</p>
-      </div>
-    </div>
-  </section>
+  {!data ? (
+    <p class="text-sm text-black/60">Couldn't load metrics right now. Refresh in a moment.</p>
+  ) : (
+    <>
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Activity</h2>
+        <p class={sub}>
+          Counted from when activity tracking started{data.range.activityTrackingSince ? ` (${data.range.activityTrackingSince})` : ""}; earlier days show zero.
+        </p>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <Stat value={data.activity.activeNow} label="Active now" hint="seen in last 10 min" tone="mint" />
+          <Stat value={data.activity.activeToday} label="Active today" hint="unique users today" />
+          <Stat value={data.activity.avgDau} label={`Avg DAU (${days}d)`} hint="mean active per day" />
+          <Stat value={data.activity.activeInRange} label={`Active in ${days}d`} hint="unique users in range" />
+          <Stat value={data.activity.totalUsers} label="Total users" hint="all signups" />
+          <Stat value={`${pct(data.activity.activeInRange, data.activity.totalUsers)}%`} label="Active share" hint={`of all users, ${days}d`} />
+        </div>
+        <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Daily active users</h3>
+        <BarSeries points={data.activity.dauPerDay} unit="active" />
+      </section>
 
-  <section class="mb-10">
-    <h2 class="mb-4 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Moles economy</h2>
-    <div class="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
-      <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-4 text-center">
-        <p class="text-2xl font-bold">{data.economy.totalEarned}</p>
-        <p class="text-xs uppercase tracking-wide text-black/50">Total earned</p>
-      </div>
-      <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-4 text-center">
-        <p class="text-2xl font-bold">{data.economy.totalSpent}</p>
-        <p class="text-xs uppercase tracking-wide text-black/50">Total spent</p>
-      </div>
-      <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-4 text-center">
-        <p class="text-2xl font-bold">{data.economy.totalOutstanding}</p>
-        <p class="text-xs uppercase tracking-wide text-black/50">Outstanding balance</p>
-      </div>
-      <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-4 text-center">
-        <p class="text-2xl font-bold">{data.economy.totalOrders}</p>
-        <p class="text-xs uppercase tracking-wide text-black/50">Shop orders ({data.economy.totalUnitsOrdered} items)</p>
-      </div>
-    </div>
-    <div class="h-4 w-full overflow-hidden rounded-full bg-white">
-      <div class="flex h-full">
-        <div class="h-full bg-app-mint" style={`width: ${(data.economy.totalEarned / totalMoles) * 100}%`} title={`Earned: ${data.economy.totalEarned}`} />
-        <div class="h-full bg-app-orange" style={`width: ${(data.economy.totalSpent / totalMoles) * 100}%`} title={`Spent: ${data.economy.totalSpent}`} />
-      </div>
-    </div>
-    <p class="mt-1 text-xs text-black/50">Earned (mint) vs. spent (orange).</p>
-  </section>
-
-  <section class="mb-10">
-    <h2 class="mb-1 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Shop favorites</h2>
-    <p class="mb-4 text-sm text-black/60">Top 5 items by units sold — what to restock or feature.</p>
-    {data.topShopItems.length === 0 ? (
-      <p class="text-sm text-black/50">No orders yet.</p>
-    ) : (
-      <div class="flex flex-col gap-2">
-        {data.topShopItems.map((item: any, i: number) => (
-          <div class="flex flex-wrap items-center justify-between gap-2 rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] px-4 py-3">
-            <span class="flex items-center gap-3">
-              <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-app-gold/50 text-xs font-bold">{i + 1}</span>
-              <span class="font-bold">{item.name}</span>
-            </span>
-            <span class="text-sm text-black/60">{item.unitsSold} sold &middot; {item.molesSpent} moles</span>
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Onboarding</h2>
+        <p class={sub}>Did people finish the nickname/onboarding step after signing up.</p>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <Stat value={data.onboarding.onboardedCount} label="Onboarded" hint={`${pct(data.onboarding.onboardedCount, data.onboarding.totalUsers)}% of signups`} tone="mint" />
+          <Stat value={data.onboarding.stuck} label="Stuck in onboarding" hint="signed up, not finished" tone={data.onboarding.stuck > 0 ? "gold" : "plain"} />
+          <Stat value={data.onboarding.signupsInRange} label={`Signups in ${days}d`} />
+          <Stat value={data.onboarding.onboardedInRange} label={`Onboarded in ${days}d`} />
+          <Stat value={fmtDuration(data.onboarding.medianOnboardSeconds)} label="Median time to onboard" hint="signup to finished" />
+        </div>
+        <div class="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Signups per day</h3>
+            <BarSeries points={data.onboarding.signupsPerDay} unit="signups" />
           </div>
-        ))}
-      </div>
-    )}
-  </section>
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Onboarding completions per day</h3>
+            <BarSeries points={data.onboarding.onboardedPerDay} unit="completed" color="bg-app-gold" />
+          </div>
+        </div>
+        <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Signup sources, last {days} days</h3>
+        {data.onboarding.sourcesInRange.length === 0 ? (
+          <p class="text-sm text-black/50">No new signups with an answer in this range.</p>
+        ) : (
+          <HBars
+            color="bg-app-lavender"
+            rows={sortSources(data.onboarding.sourcesInRange).map((r: any) => ({
+              label: HEARD_ABOUT_LABELS[r.source] ?? r.source,
+              pct: pct(r.count, data.onboarding.sourcesInRange.reduce((s: number, x: any) => s + x.count, 0)),
+              value: String(r.count),
+              hint: `${pct(r.count, data.onboarding.sourcesInRange.reduce((s: number, x: any) => s + x.count, 0))}%`,
+            }))}
+          />
+        )}
+      </section>
 
-  <section>
-    <h2 class="mb-4 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Onboarding completion</h2>
-    <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-5">
-      <p class="mb-2 text-sm">
-        <span class="font-bold">{data.onboarding.onboardedCount}</span> of{" "}
-        <span class="font-bold">{data.onboarding.totalUsers}</span> users have completed onboarding ({onboardedPct}%).
-      </p>
-      <div class="h-4 w-full overflow-hidden rounded-full bg-white">
-        <div class="h-full bg-app-gold" style={`width: ${onboardedPct}%`} />
-      </div>
-    </div>
-  </section>
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Activation funnel</h2>
+        <p class={sub}>All-time users who ever reached each step, as a share of signups (steps are not strictly in order).</p>
+        <HBars
+          labelWidth="w-56"
+          color="bg-app-mint"
+          rows={data.funnel.map((s: any) => ({
+            label: s.label,
+            pct: s.pctOfSignups,
+            value: String(s.count),
+            hint: `${s.pctOfSignups}%${s.pctOfPrevious === null ? "" : ` · ${s.pctOfPrevious}% of prev`}`,
+          }))}
+        />
+      </section>
+
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Verification and access</h2>
+        <p class={sub}>Unverified people have read-only accounts and are hidden from the Gallery.</p>
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <Stat value={data.verification.verified} label="ID verified" tone="mint" />
+          <Stat value={data.verification.unverified} label="Not verified" hint="read-only" tone="gold" />
+          <Stat value={data.verification.notEligible} label="Not eligible" hint="rejected / over 18" />
+          <Stat value={data.verification.hackatimeBanned} label="Hackatime banned" />
+          <Stat value={data.verification.teamBanned} label="Team banned" />
+          <Stat value={data.verification.ageDeclared} label="Declared 13-18" hint="age screen" />
+          <Stat value={data.verification.admins} label="Admins" />
+        </div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Projects and hours</h2>
+        <p class={sub}>Hours are the Hackatime time snapshotted on each project (at selection and at submit), not live Hackatime data.</p>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+          {data.projects.byStatus.map((r: any) => (
+            <div class={`rounded-none border-2 border-[#5c4429] p-4 text-center ${STATUS_TONE[r.status] ?? "bg-white"}`}>
+              <p class="text-2xl font-bold">{r.count}</p>
+              <p class="text-xs font-bold uppercase tracking-wide">{r.status}</p>
+            </div>
+          ))}
+          <Stat value={data.projects.createdInRange} label={`New in ${days}d`} />
+        </div>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <Stat value={fmtHours(data.hours.inReviewSeconds)} label="Hours in review" hint="projects pending" tone="gold" />
+          <Stat value={fmtHours(data.hours.submittedInRangeSeconds)} label={`Submitted in ${days}d`} hint="Hackatime hours" />
+          <Stat value={`${data.hours.approvedInRange}h`} label={`Approved in ${days}d`} hint="reviewer hours" tone="mint" />
+          <Stat value={`${Math.round(data.hours.approvedAllTime * 10) / 10}h`} label="Approved all time" />
+          <Stat value={fmtHours(data.hours.avgPerSubmittedProjectSeconds)} label="Avg per submission" hint="Hackatime hours" />
+          <Stat value={fmtHours(data.hours.onSubmittedProjectsSeconds)} label="On submitted work" hint="submitted + approved" />
+        </div>
+        <div class="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Submissions per day</h3>
+            <BarSeries points={data.projects.submittedPerDay} unit="submitted" color="bg-app-lavender" />
+          </div>
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Builders by approved hours</h3>
+            <HBars
+              labelWidth="w-24"
+              color="bg-app-gold"
+              rows={[
+                { label: "none", n: data.projects.builderBuckets.none },
+                { label: "under 5h", n: data.projects.builderBuckets.under5 },
+                { label: "5 to 10h", n: data.projects.builderBuckets.from5to10 },
+                { label: "10 to 25h", n: data.projects.builderBuckets.from10to25 },
+                { label: "25h+", n: data.projects.builderBuckets.over25 },
+              ].map((b) => ({
+                label: b.label,
+                pct: pct(b.n, data.onboarding.onboardedCount),
+                value: String(b.n),
+                hint: `${pct(b.n, data.onboarding.onboardedCount)}%`,
+              }))}
+            />
+          </div>
+        </div>
+        <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Attempts per submitted project</h3>
+        {data.projects.attempts.length === 0 ? (
+          <p class="text-sm text-black/50">No submissions yet.</p>
+        ) : (
+          <HBars
+            labelWidth="w-24"
+            color="bg-app-orange"
+            rows={data.projects.attempts.map((a: any) => ({
+              label: `${a.attempts} attempt${a.attempts === 1 ? "" : "s"}`,
+              pct: pct(a.count, data.projects.attempts.reduce((s: number, x: any) => s + x.count, 0)),
+              value: String(a.count),
+              hint: `${pct(a.count, data.projects.attempts.reduce((s: number, x: any) => s + x.count, 0))}%`,
+            }))}
+          />
+        )}
+      </section>
+
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Reviews</h2>
+        <p class={sub}>Decided = reviewed within the last {days} days. Pending is the live review queue.</p>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <Stat value={data.review.pendingNow} label="Pending now" hint="awaiting review" tone="gold" />
+          <Stat value={fmtDuration(data.review.oldestPendingSeconds)} label="Oldest in queue" hint="waiting longest" tone={data.review.oldestPendingSeconds > 7 * 86400 ? "orange" : "plain"} />
+          <Stat value={data.review.submittedInRange} label={`Submitted in ${days}d`} />
+          <Stat value={data.review.decidedInRange} label="Decided" hint="reviewed in range" />
+          <Stat value={fmtDuration(data.review.avgDecisionSeconds)} label="Avg submit to decision" hint="in range" />
+          <Stat value={data.review.approvalRate === null ? "—" : `${data.review.approvalRate}%`} label="Approval rate" hint="all time, decided" tone="mint" />
+        </div>
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat value={data.review.approvedInRange} label="Approved" hint={`in ${days}d`} tone="mint" />
+          <Stat value={data.review.changesRequestedInRange} label="Changes requested" hint={`in ${days}d`} tone="gold" />
+          <Stat value={data.review.rejectedInRange} label="Rejected" hint={`in ${days}d`} tone="orange" />
+          <Stat value={`${Math.round(data.review.avgApprovedHours * 10) / 10}h`} label="Avg approved hours" hint="per approval, all time" />
+        </div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Moles economy</h2>
+        <p class={sub}>Credits come from approved projects; debits are shop purchases.</p>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <Stat value={data.economy.earnedInRange - data.economy.spentInRange} label={`Net in ${days}d`} hint="credits minus debits" />
+          <Stat value={data.economy.earnedInRange} label={`Credits in ${days}d`} tone="mint" />
+          <Stat value={data.economy.spentInRange} label={`Debits in ${days}d`} tone="orange" />
+          <Stat value={data.economy.earnedAllTime} label="Earned all time" />
+          <Stat value={data.economy.spentAllTime} label="Spent all time" />
+          <Stat value={data.economy.outstanding} label="In accounts now" hint="sum of balances" />
+        </div>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat value={data.economy.avgMolesPerApprovedHour ?? "—"} label="Avg moles per hour" hint="earned / approved hours" />
+          <Stat value={data.economy.totalOrders} label="Shop orders" hint={`${data.economy.totalUnits} items`} />
+          <Stat value={data.economy.ordersInRange} label={`Orders in ${days}d`} />
+          <Stat value={data.economy.buyers} label="Unique buyers" hint={`${pct(data.economy.buyers, data.onboarding.totalUsers)}% of users`} />
+        </div>
+        <div class="mb-4">
+          <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Orders per day</h3>
+          <BarSeries points={data.economy.ordersPerDay} unit="orders" color="bg-app-orange" />
+        </div>
+        <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Top coin holders</h3>
+            {data.economy.topHolders.length === 0 ? (
+              <p class="text-sm text-black/50">Nobody holds moles yet.</p>
+            ) : (
+              <div class="flex flex-col gap-2">
+                {data.economy.topHolders.map((h: any, i: number) => (
+                  <div class="flex items-center justify-between rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] px-4 py-2">
+                    <span class="flex items-center gap-3">
+                      <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-app-gold/50 text-xs font-bold">{i + 1}</span>
+                      <span class="font-bold">{h.nickname}</span>
+                    </span>
+                    <span class="text-sm">{h.balance} moles</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Shop favorites</h3>
+            {data.economy.topShopItems.length === 0 ? (
+              <p class="text-sm text-black/50">No orders yet.</p>
+            ) : (
+              <div class="flex flex-col gap-2">
+                {data.economy.topShopItems.map((item: any, i: number) => (
+                  <div class="flex flex-wrap items-center justify-between gap-2 rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] px-4 py-2">
+                    <span class="flex items-center gap-3">
+                      <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-app-gold/50 text-xs font-bold">{i + 1}</span>
+                      <span class="font-bold">{item.name}</span>
+                    </span>
+                    <span class="text-sm text-black/60">{item.unitsSold} sold &middot; {item.molesSpent} moles</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class={h2} style="font-family: var(--font-anta);">Gallery engagement</h2>
+        <p class={sub}>Only projects visible in the Gallery count for "visible"; top projects use the same rules.</p>
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <Stat value={data.engagement.visibleInGallery} label="Visible in gallery" tone="mint" />
+          <Stat value={data.engagement.upvotesAllTime} label="Upvotes" hint="all time" />
+          <Stat value={data.engagement.upvotesInRange} label={`Upvotes in ${days}d`} />
+          <Stat value={data.engagement.viewsAllTime} label="Project views" hint="all time" />
+          <Stat value={data.engagement.hiddenProjects} label="Hidden by admins" />
+        </div>
+        <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Top projects</h3>
+        {data.engagement.topProjects.length === 0 ? (
+          <p class="text-sm text-black/50">Nothing in the gallery yet.</p>
+        ) : (
+          <div class="flex flex-col gap-2">
+            {data.engagement.topProjects.map((p: any, i: number) => (
+              <div class="flex flex-wrap items-center justify-between gap-2 rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] px-4 py-2">
+                <span class="flex items-center gap-3">
+                  <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-app-gold/50 text-xs font-bold">{i + 1}</span>
+                  <span class="font-bold">{p.name}</span>
+                  <span class="text-xs text-black/50">by {p.nickname} &middot; {p.status}</span>
+                </span>
+                <span class="text-sm text-black/60">{p.upvotes} upvotes &middot; {p.views} views</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 class={h2} style="font-family: var(--font-anta);">"Tell us more" responses</h2>
+        <p class={sub}>Free-text answers from onboarding step 3 ({data.heardAboutResponses.length} most recent).</p>
+        {data.heardAboutResponses.length === 0 ? (
+          <p class="text-sm text-black/50">Nobody's added extra detail yet.</p>
+        ) : (
+          <div class="flex max-h-80 flex-col gap-2 overflow-y-auto">
+            {data.heardAboutResponses.map((r: any) => (
+              <div class="rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] p-3">
+                <div class="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-black/50">
+                  <span class="font-bold text-black">{r.nickname ?? "?"}</span>
+                  <span>{HEARD_ABOUT_LABELS[r.source] ?? r.source} &middot; {new Date(r.createdAt).toLocaleDateString()}</span>
+                </div>
+                <p class="text-sm">{r.detail}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </>
+  )}
 </AdminLayout>

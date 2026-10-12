@@ -5,7 +5,7 @@
 <div class="h-auto w-full flex flex-col">
 
     <!-- Hack club picture -->
-     <a href="https://hackclub.com/" class="pointer-events-auto" target="_blank" rel="Link to Hack Club website">
+     <a href="https://hackclub.com/" class="pointer-events-auto" target="_blank" rel="noopener noreferrer" aria-label="Link to Hack Club website">
         <div class="absolute top-[-2vh] lg:top-[2vh] md:top-[1vh] sm:top-0 left-0 mt-[2vh]">
             <Image 
                 src="https://assets.hackclub.com/flag-orpheus-left.svg" 
@@ -61,6 +61,7 @@
                     <form
                         method="get"
                         action="/login"
+                        data-astro-reload
                         class="h-auto w-full flex flex-col md:flex-row items-center md:justify-center gap-3 md:gap-4 pointer-events-auto"
                     >
                         <input

@@ -4,9 +4,8 @@ const error = Astro.url.searchParams.get("error");
 
 if (!error) {
   const email = Astro.url.searchParams.get("email");
-  const target = new URL(`${import.meta.env.PUBLIC_BACKEND_URL}/auth/login`);
-  if (email) target.searchParams.set("email", email);
-  return Astro.redirect(target.toString());
+  const target = `${import.meta.env.PUBLIC_BACKEND_URL}/auth/login`;
+  return Astro.redirect(email ? `${target}?email=${encodeURIComponent(email)}` : target);
 }
 ---
 

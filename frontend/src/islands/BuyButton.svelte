@@ -1,22 +1,23 @@
 <script>
-  // Three stages: confirm quantity (client-side only) → POST /shop/:id/buy
-  // (moles actually spent) → a fulfillment form, which forwards straight to
-  // Airtable and is never persisted (same pattern as SubmissionModal.svelte).
+  // Flow: Buy → shipping info (+ quantity) → order summary → Confirm
+  // purchase. Nothing is charged or recorded until that final confirm: one
+  // POST /shop/:id/buy carries the quantity and shipping info together, and
+  // the backend creates the order, deducts moles, and writes the Airtable
+  // fulfillment record as a single all-or-nothing step (same pass-through
+  // PII pattern as SubmissionModal.svelte).
   import { apiFetch } from "../lib/api-client";
   import PopupShell from "./room/PopupShell.svelte";
   import moleIcon from "../Images/mole.png";
+  import { getContext } from "svelte";
+  import { ID_VERIFIED_CONTEXT, NOT_VERIFIED_MESSAGE } from "../lib/verification";
 
   let { itemId, itemName, priceMoles, userBalance, userEmail } = $props();
 
-  /** @type {'idle' | 'confirm' | 'fulfillment' | 'done'} */
+  /** @type {'idle' | 'shipping' | 'review' | 'done'} */
   let stage = $state("idle");
   let quantity = $state(1);
   let buying = $state(false);
   let error = $state("");
-
-  // Set once the purchase succeeds — the fulfillment request needs to
-  // know which order it's attached to.
-  let orderId = $state(null);
 
   let firstName = $state("");
   let lastName = $state("");
@@ -28,74 +29,56 @@
   let zip = $state("");
   let phone = $state("");
   let deliveryNotes = $state("");
-  let submittingFulfillment = $state(false);
 
   const canAfford = $derived(userBalance >= priceMoles);
   const maxQuantity = $derived(Math.max(1, Math.min(20, Math.floor(userBalance / priceMoles) || 1)));
   const totalCost = $derived(priceMoles * quantity);
+  const fullName = $derived(`${firstName.trim()} ${lastName.trim()}`.trim());
+  const addressSummary = $derived(
+    [addressLine1.trim(), addressLine2.trim(), city.trim(), stateProvince.trim(), zip.trim(), country.trim()]
+      .filter(Boolean)
+      .join(", "),
+  );
 
-  function openConfirm() {
+  const idVerified = getContext(ID_VERIFIED_CONTEXT) !== false;
+  let notVerifiedNotice = $state(false);
+
+  function openShipping() {
     if (!canAfford) return;
+    if (!idVerified) {
+      notVerifiedNotice = true;
+      return;
+    }
     quantity = 1;
     error = "";
-    stage = "confirm";
+    stage = "shipping";
   }
 
-  function backToIdle() {
-    if (buying || submittingFulfillment) return;
+  function close() {
+    if (buying) return;
     stage = "idle";
   }
 
-  async function confirmBuy() {
+  function goToReview(event) {
+    event.preventDefault();
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > maxQuantity || totalCost > userBalance) {
+      error = "Pick a quantity you can afford.";
+      return;
+    }
+    error = "";
+    stage = "review";
+  }
+
+  async function confirmPurchase() {
     buying = true;
     error = "";
     try {
       const res = await apiFetch(`/shop/${itemId}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quantity }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        if (body.error === "not_eligible") {
-          // Full navigation, not a client-side route change — /blocked
-          // reads the session server-side, which this same request just updated.
-          window.location.href = "/blocked";
-          return;
-        }
-        throw new Error(
-          body.error === "insufficient_balance" ? "You don't have enough moles." : "Purchase failed.",
-        );
-      }
-      const order = await res.json();
-      orderId = order.id;
-      stage = "fulfillment";
-    } catch (err) {
-      error = err instanceof Error ? err.message : "Something went wrong.";
-    } finally {
-      buying = false;
-    }
-  }
-
-  // Matches the backend's fullName regex (letters + spaces only) — strips
-  // as-you-type so the field can never hold something the submit will reject.
-  function onlyLettersAndSpaces(event) {
-    return event.currentTarget.value.replace(/[^A-Za-z ]/g, "");
-  }
-
-  async function submitFulfillment(event) {
-    event.preventDefault();
-    submittingFulfillment = true;
-    error = "";
-
-    try {
-      const res = await apiFetch(`/shop/orders/${orderId}/fulfillment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // Split here for a clearer form; the backend's fulfillmentSchema
-          // only has one "Full Name" field, so it's rejoined before sending.
-          fullName: `${firstName.trim()} ${lastName.trim()}`.trim(),
+          quantity,
+          fullName,
           addressLine1: addressLine1.trim(),
           addressLine2: addressLine2.trim() || undefined,
           city: city.trim(),
@@ -106,13 +89,46 @@
           notes: deliveryNotes.trim() || undefined,
         }),
       });
-      if (!res.ok) throw new Error("Couldn't save your shipping info.");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (body.error === "not_eligible") {
+          // Full navigation, not a client-side route change — /blocked
+          // reads the session server-side, which this same request just updated.
+          window.location.href = "/blocked";
+          return;
+        }
+        if (body.error === "eligibility_unverifiable") {
+          throw new Error("We couldn't verify your eligibility right now, so you were not charged. Please try again in a moment.");
+        }
+        if (body.error === "not_verified") throw new Error(NOT_VERIFIED_MESSAGE);
+        if (body.error === "insufficient_balance") throw new Error("You don't have enough moles.");
+        if (body.error === "fulfillment_failed") {
+          throw new Error("We couldn't record your order, so you were not charged. Please try again.");
+        }
+        if (body.error === "fulfillment_unconfirmed") {
+          throw new Error(
+            "We couldn't confirm your order yet. Don't buy again: it is being checked and will either go through or your moles will be returned within a few minutes. Check your Profile for the result.",
+          );
+        }
+        if (res.status === 400) {
+          stage = "shipping";
+          throw new Error("Some of your shipping info looks invalid. Please check it and try again.");
+        }
+        throw new Error("The purchase didn't complete. Check your moles balance in your Profile before trying again.");
+      }
       stage = "done";
     } catch (err) {
       error = err instanceof Error ? err.message : "Something went wrong.";
     } finally {
-      submittingFulfillment = false;
+      buying = false;
     }
+  }
+
+  // Matches the backend's fullName regex (Unicode letters, marks, spaces,
+  // hyphens, apostrophes, periods) — strips anything else as-you-type, but
+  // keeps accents like José and O'Brien intact.
+  function onlyLettersAndSpaces(event) {
+    return event.currentTarget.value.replace(/[^\p{L}\p{M} .'’-]/gu, "");
   }
 
   const fieldClass =
@@ -137,21 +153,20 @@
 
 <button
   type="button"
-  onclick={openConfirm}
+  onclick={openShipping}
   disabled={!canAfford}
   class="w-full cursor-pointer rounded-none border-2 border-[#5c4429] bg-app-mint px-5 py-2 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/70 disabled:cursor-not-allowed disabled:opacity-30"
 >
   {canAfford ? "Buy" : "Not enough moles"}
 </button>
+{#if notVerifiedNotice}
+  <p class="mt-2 text-xs text-app-orange">{NOT_VERIFIED_MESSAGE}</p>
+{/if}
 
-{#if stage === "confirm"}
-  <PopupShell title="Confirm purchase" maxWidth="max-w-sm" onClose={backToIdle}>
+{#if stage === "shipping"}
+  <PopupShell title="Shipping info" subtitle="Where should we send it? You won't be charged yet." maxWidth="max-w-xl" onClose={close}>
     {#snippet children()}
-      <div class="flex flex-col items-center gap-4 text-center">
-        <p>
-          Buy <strong>{itemName}</strong>?
-        </p>
-
+      <form onsubmit={goToReview} class="flex flex-col gap-4">
         <label class="flex items-center gap-3 text-sm font-bold">
           Quantity
           <input
@@ -161,43 +176,12 @@
             bind:value={quantity}
             class="w-20 rounded-none border-2 border-[#5c4429]/40 bg-white px-2 py-1.5 text-center outline-none focus:border-[#5c4429]"
           />
+          <span class="flex items-center gap-1.5 font-normal text-black/60">
+            <img src={moleIcon.src} alt="" width="16" height="16" class="h-4 w-4 shrink-0" />
+            {totalCost}
+          </span>
         </label>
 
-        <p class="flex items-center gap-2 text-xl font-bold">
-          <img src={moleIcon.src} alt="" width="24" height="24" class="h-6 w-6 shrink-0" />
-          {totalCost}
-        </p>
-
-        {#if error}
-          <p class="text-sm text-app-orange">{error}</p>
-        {/if}
-
-        <div class="flex gap-3">
-          <button
-            type="button"
-            onclick={backToIdle}
-            class="cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-black/5"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onclick={confirmBuy}
-            disabled={buying || totalCost > userBalance}
-            class="cursor-pointer rounded-none border-2 border-[#5c4429] bg-app-mint px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/70 disabled:opacity-30"
-          >
-            {buying ? "Buying..." : "Confirm"}
-          </button>
-        </div>
-      </div>
-    {/snippet}
-  </PopupShell>
-{/if}
-
-{#if stage === "fulfillment"}
-  <PopupShell title="Shipping info" subtitle="Enter your shipping information." maxWidth="max-w-xl" onClose={backToIdle}>
-    {#snippet children()}
-      <form onsubmit={submitFulfillment} class="flex flex-col gap-4">
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label class="flex flex-col gap-1 text-sm font-bold">
             First name
@@ -209,12 +193,8 @@
           </label>
         </div>
         <p class="-mt-2 text-xs font-normal text-black/50">
-          Please use your real (legal) first and last name. This is what goes on your shipping
+          Please use your legal first and last name. This is what goes on your shipping
           label.
-        </p>
-
-        <p class="-mt-2 text-xs font-normal text-black/50">
-          Tracking info, if any, will be sent to your account email ({userEmail}).
         </p>
 
         <label class="flex flex-col gap-1 text-sm font-bold">
@@ -251,17 +231,17 @@
         </label>
 
         <label class="flex flex-col gap-1 text-sm font-bold">
-          Delivery notes <span class="font-normal text-black/50">(optional)</span>
+          Delivery & fullfilment notes <span class="font-normal text-black/50">(optional)</span>
           <textarea
             bind:value={deliveryNotes}
             maxlength="1000"
             rows="3"
-            placeholder="Gate code, apartment/suite number, best time to deliver, anything else worth knowing..."
+            placeholder="Details on how/where you want us to buy it, or maybe some detials on delivery or anything else worth knowing..."
             use:autoResize
             class={`${fieldClass} max-h-40 resize-none overflow-y-auto`}
           ></textarea>
           <span class="text-xs font-normal text-black/50">
-            Anything specific the person shipping this should know.
+            Anything specific the person buying and/or shipping this should know.
           </span>
         </label>
 
@@ -271,12 +251,74 @@
 
         <button
           type="submit"
-          disabled={submittingFulfillment}
-          class="mt-2 w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-app-mint px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/70 disabled:opacity-30"
+          class="mt-2 w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-app-mint px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/70"
         >
-          {submittingFulfillment ? "Saving..." : "Confirm"}
+          Review order
         </button>
       </form>
+    {/snippet}
+  </PopupShell>
+{/if}
+
+{#if stage === "review"}
+  <PopupShell title="Confirm purchase" subtitle="Review your order. You'll be charged when you confirm." maxWidth="max-w-md" onClose={close}>
+    {#snippet children()}
+      <div class="flex flex-col gap-4">
+        <div class="rounded-none border-2 border-[#5c4429]/30 bg-white/60 p-4 text-left">
+          <p class="mb-2 text-xs font-bold uppercase tracking-wide text-black/50">Order summary</p>
+          <div class="flex items-center justify-between text-sm">
+            <span>{itemName}</span>
+            <span class="font-bold">&times;{quantity}</span>
+          </div>
+          <div class="mt-2 flex items-center justify-between border-t-2 border-[#5c4429]/20 pt-2 text-sm font-bold">
+            <span>Total</span>
+            <span class="flex items-center gap-1.5">
+              <img src={moleIcon.src} alt="" width="18" height="18" class="h-[18px] w-[18px] shrink-0" />
+              {totalCost} moles
+            </span>
+          </div>
+          <div class="mt-1 flex items-center justify-between text-xs text-black/50">
+            <span>Balance after</span>
+            <span>{userBalance - totalCost} moles</span>
+          </div>
+        </div>
+
+        <div class="rounded-none border-2 border-[#5c4429]/30 bg-white/60 p-4 text-left text-sm">
+          <p class="mb-2 text-xs font-bold uppercase tracking-wide text-black/50">Shipping to</p>
+          <p class="font-bold">{fullName}</p>
+          <p>{addressSummary}</p>
+          <p class="text-black/60">{phone}</p>
+          {#if deliveryNotes.trim()}
+            <p class="mt-2 text-xs text-black/60">Notes: {deliveryNotes.trim()}</p>
+          {/if}
+        </div>
+
+        {#if error}
+          <p class="text-sm text-app-orange">{error}</p>
+        {/if}
+
+        <div class="flex gap-3">
+          <button
+            type="button"
+            onclick={() => {
+              error = "";
+              stage = "shipping";
+            }}
+            disabled={buying}
+            class="cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-black/5 disabled:opacity-30"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            onclick={confirmPurchase}
+            disabled={buying || totalCost > userBalance}
+            class="cursor-pointer rounded-none border-2 border-[#5c4429] bg-app-mint px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/70 disabled:opacity-30"
+          >
+            {buying ? "Buying..." : "Confirm purchase"}
+          </button>
+        </div>
+      </div>
     {/snippet}
   </PopupShell>
 {/if}

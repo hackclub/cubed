@@ -27,5 +27,6 @@ COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 4321
 # BACKEND_URL (server-side SSR calls) must be set at runtime — unlike
-# PUBLIC_BACKEND_URL above, it's read fresh per-request, not baked in.
+# PUBLIC_BACKEND_URL above, it's read from the environment per request (src/lib/api.ts),
+# not baked in.
 CMD ["node", "./dist/server/entry.mjs"]

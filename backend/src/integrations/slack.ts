@@ -16,6 +16,7 @@ export async function fetchSlackAvatarUrl(slackId: string): Promise<string | nul
 
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${config.slack.botToken}` },
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {

@@ -2,15 +2,34 @@ import { Hono } from "hono";
 import { randomBytes } from "node:crypto";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
+import { bodyLimit } from "hono/body-limit";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
 import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { users } from "../db/schema.js";
-import { createSession, deleteSession, SESSION_COOKIE_NAME, attachSession, type SessionContext } from "../lib/session.js";
+import {
+  createSession,
+  deleteSession,
+  deleteAllSessionsForUser,
+  requireAuth,
+  SESSION_COOKIE_NAME,
+  attachSession,
+  type SessionContext,
+} from "../lib/session.js";
 import { authRateLimit } from "../middleware/rate-limit.js";
 import { fetchSlackAvatarUrl } from "../integrations/slack.js";
 import { fetchHackatimeTrustLevel } from "../integrations/hackatime.js";
 import { checkYswsEligibility } from "../integrations/hackclub-auth.js";
-import { eligibilityBlockReason } from "../lib/eligibility.js";
+import { eligibilityBlockReason, isIdVerified } from "../lib/eligibility.js";
+import {
+  AGE_BLOCK_COOKIE_NAME,
+  AGE_BLOCK_TTL_S,
+  readPendingSignup,
+  SIGNUP_COOKIE_NAME,
+  SIGNUP_TTL_MS,
+  signPendingSignup,
+} from "../lib/signup-cookie.js";
 
 const AUTH_BASE_URL = "https://auth.hackclub.com";
 const STATE_COOKIE_NAME = "cubed_oauth_state";
@@ -31,7 +50,7 @@ authRoutes.get("/login", authRateLimit, (c) => {
 
   setCookie(c, STATE_COOKIE_NAME, state, {
     httpOnly: true,
-    secure: config.isProd,
+    secure: config.cookieSecure,
     sameSite: "Lax",
     maxAge: 60 * 10,
     path: "/",
@@ -44,10 +63,9 @@ authRoutes.get("/login", authRateLimit, (c) => {
   url.searchParams.set("scope", SCOPES);
   url.searchParams.set("state", state);
 
-  // Standard OAuth2 param name; unconfirmed whether Hack Club Auth honors
-  // it, but harmless if ignored.
+  // Pre-fills Hack Club Auth's sign-in box (useful for people with no account yet).
   const email = c.req.query("email");
-  if (email) {
+  if (email && email.length <= 254) {
     url.searchParams.set("login_hint", email);
   }
 
@@ -58,10 +76,13 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
   // Distinct from the state mismatch check below, which is the CSRF-relevant case.
   const oauthError = c.req.query("error");
   if (oauthError) {
-    const description = c.req.query("error_description") ?? oauthError;
-    return c.redirect(
-      `${config.frontendUrl}/login?error=${encodeURIComponent(description)}`,
-    );
+    // Fixed messages only: echoing error_description would let a crafted link
+    // show arbitrary text (e.g. a fake "account suspended, email ...") on our login page.
+    const message =
+      oauthError === "access_denied"
+        ? "You cancelled the login."
+        : "Hack Club Auth couldn't log you in. Please try again.";
+    return c.redirect(`${config.frontendUrl}/login?error=${encodeURIComponent(message)}`);
   }
 
   const code = c.req.query("code");
@@ -84,6 +105,7 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
       code,
       grant_type: "authorization_code",
     }),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!tokenResponse.ok) {
     return c.text("Hack Club Auth token exchange failed", 502);
@@ -99,6 +121,7 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
 
   const meResponse = await fetch(`${AUTH_BASE_URL}/api/v1/me`, {
     headers: { Authorization: `Bearer ${token.access_token}` },
+    signal: AbortSignal.timeout(10_000),
   });
   if (!meResponse.ok) {
     return c.text("Hack Club Auth identity fetch failed", 502);
@@ -110,6 +133,14 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
     };
   };
 
+  // Hack Club Auth accounts without a linked Slack ID can't be mapped to a
+  // user (everything here is keyed on it) — explain instead of crashing.
+  if (!me.identity?.slack_id) {
+    return c.redirect(
+      `${config.frontendUrl}/login?error=${encodeURIComponent("Your Hack Club account has no Slack account linked. Link one at auth.hackclub.com, then try again.")}`,
+    );
+  }
+
   // Checked before writing anything — a brand-new Slack identity that
   // fails eligibility must leave zero trace in Postgres (not even a row to
   // later flip a flag on). An *existing* account that later fails this same
@@ -120,8 +151,8 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
   // Both swallow their own errors and return null on a hiccup — an
   // unreachable Hackatime/Auth should never block a login outright. A null
   // result just leaves that field at whatever it already was (or the
-  // column default, for a brand-new user); jobs/eligibility-sync.ts will
-  // fill in the real value on its next run either way.
+  // column default, for a brand-new user); the submit/buy gates
+  // (lib/eligibility-check.ts) fail closed on a still-unknown status.
   const [avatarUrl, trustLevel, yswsStatus] = await Promise.all([
     fetchSlackAvatarUrl(me.identity.slack_id),
     fetchHackatimeTrustLevel(me.identity.slack_id),
@@ -131,8 +162,38 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
   const hackatimeBanned = trustLevel === "red";
   const blockReason = eligibilityBlockReason(hackatimeBanned, yswsStatus);
 
-  if (!existing && blockReason) {
-    return c.redirect(`${config.frontendUrl}/login-blocked?reason=${blockReason}`);
+  if (!existing) {
+    // Hack Club Auth's check is how we know who is verified. If it can't answer
+    // for a brand-new person we don't guess — no account, try again shortly.
+    // (Existing accounts keep their stored status through a hiccup.)
+    if (yswsStatus === null) {
+      return c.redirect(
+        `${config.frontendUrl}/login?error=${encodeURIComponent("Hack Club Auth isn't responding right now. Please try again in a few minutes.")}`,
+      );
+    }
+    if (blockReason) {
+      return c.redirect(`${config.frontendUrl}/login-blocked?reason=${blockReason}`);
+    }
+    // Not ID verified: ask their age before creating anything (see lib/signup-cookie.ts).
+    if (!isIdVerified(yswsStatus)) {
+      // This browser just answered "12 or under" / "19 or older". Only applies
+      // here, to unverified newcomers — verified people on a shared computer are unaffected.
+      if (getCookie(c, AGE_BLOCK_COOKIE_NAME)) {
+        return c.redirect(`${config.frontendUrl}/age?blocked=1`);
+      }
+      setCookie(
+        c,
+        SIGNUP_COOKIE_NAME,
+        signPendingSignup({
+          slackId: me.identity.slack_id,
+          email: me.identity.primary_email,
+          avatarUrl: avatarUrl ?? null,
+          yswsStatus: yswsStatus as "needs_submission" | "pending" | "not_found",
+        }),
+        { httpOnly: true, secure: config.cookieSecure, sameSite: "Lax", maxAge: SIGNUP_TTL_MS / 1000, path: "/" },
+      );
+      return c.redirect(`${config.frontendUrl}/age`);
+    }
   }
 
   // Never touches first/last name (legal name, never persisted) or
@@ -167,14 +228,14 @@ authRoutes.get("/callback", authRateLimit, async (c) => {
     .returning({ id: users.id, isBanned: users.isBanned });
 
   if (user.isBanned) {
-    return c.redirect(`${config.frontendUrl}/login?error=${encodeURIComponent("This account has been suspended.")}`);
+    return c.redirect(`${config.frontendUrl}/suspended`);
   }
 
   const session = await createSession(user.id);
 
   setCookie(c, SESSION_COOKIE_NAME, session.id, {
     httpOnly: true,
-    secure: config.isProd,
+    secure: config.cookieSecure,
     sameSite: "Lax",
     expires: session.expiresAt,
     path: "/",
@@ -190,4 +251,64 @@ authRoutes.post("/logout", attachSession, async (c) => {
   }
   deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
   return c.body(null, 204);
+});
+
+// Ends every session for this user (all devices/browsers), not just this one.
+authRoutes.post("/logout-all", requireAuth, async (c) => {
+  await deleteAllSessionsForUser(c.get("user")!.id);
+  deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
+  return c.body(null, 204);
+});
+
+// The age screen's answer. Only reachable with the signed cookie the callback
+// set for a brand-new, not-yet-verified person. "13-18" creates the account
+// (read-only until they verify, with the declaration recorded); anything else
+// stores NOTHING and just drops the cookie.
+const ageSchema = z.object({ band: z.enum(["12_or_under", "13_18", "19_plus"]) });
+
+authRoutes.post("/age", authRateLimit, bodyLimit({ maxSize: 4 * 1024 }), zValidator("json", ageSchema), async (c) => {
+  const { band } = c.req.valid("json");
+  const pending = readPendingSignup(getCookie(c, SIGNUP_COOKIE_NAME));
+  if (!pending) {
+    return c.json({ error: "signup_expired" }, 400);
+  }
+  deleteCookie(c, SIGNUP_COOKIE_NAME, { path: "/" });
+
+  if (band !== "13_18") {
+    setCookie(c, AGE_BLOCK_COOKIE_NAME, "1", {
+      httpOnly: true,
+      secure: config.cookieSecure,
+      sameSite: "Lax",
+      maxAge: AGE_BLOCK_TTL_S,
+      path: "/",
+    });
+    return c.json({ blocked: true });
+  }
+
+  const [user] = await db
+    .insert(users)
+    .values({
+      slackId: pending.slackId,
+      email: pending.email,
+      avatarUrl: pending.avatarUrl,
+      yswsStatus: pending.yswsStatus,
+      ageDeclaredAt: new Date(),
+    })
+    .onConflictDoUpdate({ target: users.slackId, set: { email: pending.email } })
+    .returning({ id: users.id, isBanned: users.isBanned });
+
+  if (user.isBanned) {
+    return c.json({ suspended: true });
+  }
+
+  const session = await createSession(user.id);
+  setCookie(c, SESSION_COOKIE_NAME, session.id, {
+    httpOnly: true,
+    secure: config.cookieSecure,
+    sameSite: "Lax",
+    expires: session.expiresAt,
+    path: "/",
+  });
+
+  return c.json({ next: "/dashboard" });
 });

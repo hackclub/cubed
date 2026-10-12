@@ -3,8 +3,9 @@
   // its URL in sync (?project=<id>) without a real page navigation.
   // Display depends on status: draft → editable form; submitted →
   // read-only "waiting on a reviewer"; approved → read-only, credited
-  // hours; rejected → read-only, terminal, feedback only. No
-  // "needs_changes" — see the projectStatusEnum comment in schema.ts.
+  // hours; rejected → read-only, terminal, feedback only. "Need changes" isn't
+  // a project status: the project goes back to draft and the latest submission
+  // reads "changes requested" (banner below).
   import { fade } from "svelte/transition";
   import { apiFetch } from "../../lib/api-client";
   import SubmissionModal from "../SubmissionModal.svelte";
@@ -34,6 +35,11 @@
   });
 
   let latestSubmission = $derived(submissions[0] ?? null);
+  // A draft whose latest attempt came back as "need changes" — the reviewer's
+  // note is shown at the top, and the next submit is another attempt.
+  let changesRequested = $derived(
+    project.status === "draft" && latestSubmission?.status === "changes_requested",
+  );
   let isEditable = $derived(project.status === "draft");
 
   let name = $state(project.name);
@@ -44,8 +50,8 @@
   // overwrites these if the user actually interacts with it this session,
   // so saving other fields (e.g. just a description tweak) can't
   // accidentally wipe out an already-chosen Hackatime selection.
-  let hackatimeProjectsAndDates = $state(project.hackatimeProjectsAndDates ?? "");
-  let hackatimeUserId = $state(project.hackatimeUserId ?? "");
+  // undefined until the user touches the picker, so an unrelated save never re-sends (and re-verifies) it.
+  let hackatimeProjects = $state(undefined);
   let saving = $state(false);
   let saveStatus = $state("");
 
@@ -74,16 +80,32 @@
           description: description.trim(),
           repoUrl: repoUrl.trim() || undefined,
           demoUrl: demoUrl.trim() || undefined,
-          hackatimeProjectsAndDates: hackatimeProjectsAndDates || undefined,
-          hackatimeUserId: hackatimeUserId || undefined,
+          // Names only — an empty list clears it. The server fixes the date
+          // range and resolves the Hackatime user ID.
+          hackatimeProjects,
         }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const messages = {
+          hackatime_project_not_found: "One of those Hackatime projects wasn't found on your account.",
+          invalid_hackatime_selection: "That Hackatime selection isn't valid. Re-select your projects.",
+          hackatime_unavailable: "Couldn't verify with Hackatime right now. Try again in a moment.",
+        };
+        if (body.error === "reused_rejected") {
+          throw new Error(
+            body.kind === "repo"
+              ? "That repo was used on a project of yours that was rejected, so it can't be reused."
+              : "One of those Hackatime projects was used on a project of yours that was rejected, so it can't be reused.",
+          );
+        }
+        throw new Error(messages[body.error] ?? "");
+      }
       const updated = await res.json();
       setSaveStatus("Saved.", 2500);
       onUpdated(updated);
-    } catch {
-      setSaveStatus("Couldn't save, try again.");
+    } catch (err) {
+      setSaveStatus(err instanceof Error && err.message ? err.message : "Couldn't save, try again.");
     } finally {
       saving = false;
     }
@@ -97,10 +119,17 @@
     deleting = true;
     try {
       const res = await apiFetch(`/projects/${project.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error === "has_submissions"
+            ? "This draft already went through a review round, so it can't be deleted. Fix it and submit it again."
+            : "Couldn't delete, try again.",
+        );
+      }
       onDeleted(project.id);
-    } catch {
-      alert("Couldn't delete, try again.");
+    } catch (err) {
+      alert(err instanceof Error && err.message ? err.message : "Couldn't delete, try again.");
       deleting = false;
     }
   }
@@ -117,12 +146,21 @@
     formData.append("photo", file);
     try {
       const res = await apiFetch(`/projects/${project.id}/photo`, { method: "POST", body: formData });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error === "too_many_uploads"
+            ? "Too many uploads this hour. Try again later."
+            : body.error === "photo_locked"
+              ? "The photo can't be changed after you submit."
+              : "",
+        );
+      }
       const updated = await res.json();
       photoStatus = "";
       onUpdated(updated);
-    } catch {
-      photoStatus = "Upload failed, try again.";
+    } catch (err) {
+      photoStatus = err instanceof Error && err.message ? err.message : "Upload failed, try again.";
     } finally {
       uploadingPhoto = false;
     }
@@ -190,17 +228,21 @@
       {/if}
       <div class="flex flex-col gap-2">
         <div class="flex flex-wrap gap-2">
+          {#if isEditable}
           <label class="w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wide hover:bg-app-mint">
             {project.photoUrl ? "Replace photo" : "Upload photo"}
             <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" onchange={onPhotoChange} disabled={uploadingPhoto} class="hidden" />
           </label>
-          {#if project.photoUrl}
+          {/if}
+          {#if project.photoUrl && isEditable}
             <button type="button" onclick={removePhoto} disabled={uploadingPhoto} class="w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wide hover:bg-app-orange hover:text-white disabled:opacity-30">
               Remove
             </button>
           {/if}
         </div>
-        <span class="text-xs text-black/50">PNG, JPEG, GIF, or WebP. 10MB max.</span>
+        <span class="text-xs text-black/50">
+          {isEditable ? "PNG, JPEG, GIF, or WebP. 10MB max." : "The photo is locked once a project is submitted."}
+        </span>
         {#if photoStatus}<span class="text-sm text-black/60">{photoStatus}</span>{/if}
       </div>
     </div>
@@ -219,6 +261,18 @@
     <div class="rounded-none border-2 border-[#5c4429] bg-app-lavender/40 p-5">
       <p class="font-bold">Under review</p>
       <p class="text-sm text-black/70">A reviewer hasn't made a decision yet. Check back later.</p>
+    </div>
+  {/if}
+
+  {#if changesRequested}
+    <div class="rounded-none border-2 border-[#5c4429] bg-app-orange/30 p-5">
+      <p class="mb-1 font-bold">Changes requested</p>
+      <p class="whitespace-pre-wrap text-sm text-black/80">
+        {latestSubmission.feedback || "Your reviewer asked for changes. Update your project and submit it again."}
+      </p>
+      <p class="mt-2 text-xs text-black/50">
+        Attempt {submissions.length + 1} of 3 once you submit again.
+      </p>
     </div>
   {/if}
 
@@ -253,9 +307,8 @@
         Hackatime Project(s)
         <HackatimeProjectPicker
           initialFormatted={project.hackatimeProjectsAndDates ?? ""}
-          onSelectionChange={({ formatted, hackatimeUserId: id }) => {
-            hackatimeProjectsAndDates = formatted;
-            hackatimeUserId = id;
+          onSelectionChange={({ names }) => {
+            hackatimeProjects = names;
           }}
         />
       </div>

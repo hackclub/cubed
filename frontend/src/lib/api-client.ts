@@ -6,7 +6,7 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   const method = (init.method ?? "GET").toUpperCase();
   const needsCsrfHeader = method !== "GET" && method !== "HEAD";
 
-  return fetch(`${BACKEND_URL}${path}`, {
+  const response = await fetch(`${BACKEND_URL}${path}`, {
     ...init,
     credentials: "include",
     headers: {
@@ -14,4 +14,13 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
       ...(needsCsrfHeader ? { "X-Requested-With": "cubed" } : {}),
     },
   });
+
+  // A ban made while someone is mid-session: any call answers 403 "suspended".
+  // Send them to the explanation page instead of leaving buttons failing quietly.
+  if (response.status === 403) {
+    const body = await response.clone().json().catch(() => null);
+    if (body?.error === "suspended") window.location.href = "/suspended";
+  }
+
+  return response;
 }

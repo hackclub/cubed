@@ -10,7 +10,7 @@ const VALID_LEVELS: HackatimeTrustLevel[] = ["blue", "red", "green"];
 export async function fetchHackatimeTrustLevel(slackId: string): Promise<HackatimeTrustLevel | null> {
   try {
     const url = `https://hackatime.hackclub.com/api/v1/users/${encodeURIComponent(slackId)}/trust_factor`;
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) {
       return null;
     }
@@ -23,7 +23,7 @@ export async function fetchHackatimeTrustLevel(slackId: string): Promise<Hackati
   }
 }
 
-export type HackatimeProject = { name: string; hours: number; minutes: number; text: string };
+export type HackatimeProject = { name: string; hours: number; minutes: number; text: string; totalSeconds: number };
 
 // Same public, unauthenticated `/stats` endpoint Hackatime itself uses for
 // its own dashboard — undocumented in the newer Swagger docs at
@@ -43,7 +43,7 @@ export async function fetchHackatimeProjects(
     url.searchParams.set("start_date", startDate);
     url.searchParams.set("end_date", endDate);
 
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) {
       return null;
     }
@@ -51,7 +51,7 @@ export async function fetchHackatimeProjects(
     const body = (await response.json()) as {
       data?: {
         user_id?: string;
-        projects?: { name: string; hours: number; minutes: number; text: string }[];
+        projects?: { name: string; hours: number; minutes: number; text: string; total_seconds?: number }[];
       };
     };
     if (!body.data) {
@@ -65,6 +65,8 @@ export async function fetchHackatimeProjects(
         hours: p.hours,
         minutes: p.minutes,
         text: p.text,
+        // Fall back to the rounded h/m if a future API version drops total_seconds.
+        totalSeconds: Math.max(0, Math.round(p.total_seconds ?? p.hours * 3600 + p.minutes * 60)),
       })),
     };
   } catch {

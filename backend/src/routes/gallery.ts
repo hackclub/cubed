@@ -1,85 +1,140 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { and, desc, eq, ilike, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { projectUpvotes, projects, users } from "../db/schema.js";
-import { requireAuth, type SessionContext } from "../lib/session.js";
+import { requireAuth, requireVerified, type SessionContext } from "../lib/session.js";
 
 export const galleryRoutes = new Hono<SessionContext>();
 
-// `q` (name search), `status` (filter), and `userId` (one user's own
-// projects — powers the gallery's "view all of this person's projects"
-// pfp click) are all optional — an empty gallery request still returns
-// everything, same as before these existed. "rejected" is deliberately not
-// a selectable status here — rejected projects never show in the gallery
-// at all, regardless of filter (enforced again below, unconditionally).
+const PAGE_SIZE = 24;
+
+// Drafts are public on purpose (product decision); rejected projects never are.
+const GALLERY_STATUSES = ["draft", "submitted", "approved"] as const;
+
+// Every gallery route requires a login (the data is about minors). What it may show is
+// enforced here once rather than trusted to the frontend: drafts, submitted and approved projects (never rejected ones),
+// not hidden by an admin, and owned by someone who is ID verified and not
+// banned (team ban or Hackatime ban). Everything of an unverified or banned
+// owner disappears from the gallery entirely.
+// Admins skip the hidden filter so they can find and unhide things.
+function visibleConditions(isAdmin: boolean): SQL[] {
+  return [
+    inArray(projects.status, [...GALLERY_STATUSES]),
+    eq(users.yswsStatus, "verified_eligible"),
+    eq(users.isBanned, false),
+    eq(users.hackatimeBanned, false),
+    ...(isAdmin ? [] : [eq(projects.hidden, false)]),
+  ];
+}
+
+// `q` (name search), `status`, `sort`, `userId` (one user's projects — powers
+// the "view all of this person's projects" pfp click) and `page` are all
+// optional. status can only be draft/submitted/approved: rejected projects
+// are never shown, whatever the filter says.
 const gallerySearchSchema = z.object({
   q: z.string().trim().max(200).optional(),
-  status: z.enum(["draft", "submitted", "approved"]).optional(),
+  status: z.enum(GALLERY_STATUSES).optional(),
   userId: z.string().uuid().optional(),
+  sort: z.enum(["recent", "upvotes"]).default("recent"),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
 });
 
-// Public response — never email/slack_id (slackId is the one exception,
-// admin-only, added conditionally below). userId IS included on purpose —
-// it's how the frontend links a project's submitter avatar to "view all of
-// this user's projects". repoUrl/demoUrl ARE included on purpose too — a
-// deliberate product decision (this used to say "never" on those two) —
-// visitors seeing a project's code/demo is the point.
-galleryRoutes.get("/", zValidator("query", gallerySearchSchema), async (c) => {
-  // null for a logged-out visitor — used for viewerHasUpvoted and the
-  // admin-only slackId column below.
-  const viewer = c.get("user");
-  const { q, status, userId } = c.req.valid("query");
+const idParamSchema = z.object({ id: z.string().uuid() });
 
-  // Rejected projects never show in the gallery, full stop — not behind a
-  // filter toggle, not even in "view a user's own projects". Pushed
-  // unconditionally, independent of whatever `status`/`userId` narrows to.
-  const conditions = [ne(projects.status, "rejected")];
-  if (q) conditions.push(ilike(projects.name, `%${q}%`));
+// Table-qualified as raw SQL text — the query has a JOIN so Drizzle would
+// qualify columns correctly anyway, but relying on that broke silently in
+// routes/projects.ts's JOIN-less version of this same subquery.
+const upvoteCountSql = sql<number>`(select count(*)::int from project_upvotes where project_upvotes.project_id = projects.id)`;
+
+// Public response — never email. slackId and `hidden` are admin-only (added
+// conditionally). userId IS included on purpose — it's how the frontend
+// links a project's submitter avatar to "view all of this user's projects".
+// repoUrl/demoUrl ARE included on purpose too: visitors seeing a project's
+// code/demo is the point.
+function galleryColumns(viewer: { id: string; isAdmin: boolean } | null) {
+  return {
+    id: projects.id,
+    name: projects.name,
+    description: projects.description,
+    status: projects.status,
+    photoUrl: projects.photoUrl,
+    repoUrl: projects.repoUrl,
+    demoUrl: projects.demoUrl,
+    userId: projects.userId,
+    nickname: users.nickname,
+    avatarUrl: users.avatarUrl,
+    hackatimeSeconds: projects.hackatimeSeconds,
+    viewCount: projects.viewCount,
+    upvoteCount: upvoteCountSql,
+    viewerHasUpvoted: viewer
+      ? sql<boolean>`exists(select 1 from project_upvotes where project_upvotes.project_id = projects.id and project_upvotes.user_id = ${viewer.id})`
+      : sql<boolean>`false`,
+    ...(viewer?.isAdmin ? { slackId: users.slackId, hidden: projects.hidden } : {}),
+  };
+}
+
+galleryRoutes.get("/", requireAuth, zValidator("query", gallerySearchSchema), async (c) => {
+  // null for a logged-out visitor — used for viewerHasUpvoted and the
+  // admin-only columns.
+  const viewer = c.get("user");
+  const { q, status, userId, sort, page } = c.req.valid("query");
+
+  const conditions = visibleConditions(Boolean(viewer?.isAdmin));
+  // Escape LIKE wildcards so a search for "%" or "_" is literal, not match-everything.
+  if (q) conditions.push(ilike(projects.name, `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`));
   if (status) conditions.push(eq(projects.status, status));
   if (userId) conditions.push(eq(projects.userId, userId));
 
+  const order =
+    sort === "upvotes"
+      ? [desc(upvoteCountSql), desc(projects.createdAt)]
+      : [sql`case when ${projects.status} = 'approved' then 0 else 1 end`, desc(projects.createdAt)];
+
+  // One extra row tells us whether another page exists without a count query.
   const rows = await db
-    .select({
-      id: projects.id,
-      name: projects.name,
-      description: projects.description,
-      status: projects.status,
-      photoUrl: projects.photoUrl,
-      repoUrl: projects.repoUrl,
-      demoUrl: projects.demoUrl,
-      userId: projects.userId,
-      nickname: users.nickname,
-      avatarUrl: users.avatarUrl,
-      viewCount: projects.viewCount,
-      // Table-qualified as raw SQL text — this query has a JOIN so Drizzle
-      // would qualify columns correctly anyway, but relying on that broke
-      // silently in routes/projects.ts's JOIN-less version of this same subquery.
-      upvoteCount: sql<number>`(select count(*)::int from project_upvotes where project_upvotes.project_id = projects.id)`,
-      viewerHasUpvoted: viewer
-        ? sql<boolean>`exists(select 1 from project_upvotes where project_upvotes.project_id = projects.id and project_upvotes.user_id = ${viewer.id})`
-        : sql<boolean>`false`,
-      // Admin-only — shown next to the nickname in the gallery's detailed
-      // project view so admins can look someone up in Slack directly.
-      ...(viewer?.isAdmin ? { slackId: users.slackId } : {}),
-    })
+    .select(galleryColumns(viewer))
     .from(projects)
     .innerJoin(users, eq(projects.userId, users.id))
     .where(and(...conditions))
-    .orderBy(sql`case when ${projects.status} = 'approved' then 0 else 1 end`, desc(projects.createdAt));
+    .orderBy(...order, asc(projects.id))
+    .limit(PAGE_SIZE + 1)
+    .offset((page - 1) * PAGE_SIZE);
 
-  return c.json(rows);
+  return c.json({ items: rows.slice(0, PAGE_SIZE), page, hasMore: rows.length > PAGE_SIZE });
+});
+
+// Single project, for deep links (`?gallery=<id>`) to something that isn't on
+// the first page. Same visibility rules as the list.
+galleryRoutes.get("/:id", requireAuth, zValidator("param", idParamSchema), async (c) => {
+  const viewer = c.get("user");
+  const { id } = c.req.valid("param");
+
+  const [row] = await db
+    .select(galleryColumns(viewer))
+    .from(projects)
+    .innerJoin(users, eq(projects.userId, users.id))
+    .where(and(eq(projects.id, id), ...visibleConditions(Boolean(viewer?.isAdmin))));
+
+  if (!row) {
+    return c.json({ error: "not_found" }, 404);
+  }
+  return c.json(row);
 });
 
 // Not restricted to non-owners — upvoting your own project is a little
 // silly but low-stakes, not worth the extra ownership-lookup complexity.
-galleryRoutes.post("/:id/upvote", requireAuth, async (c) => {
+galleryRoutes.post("/:id/upvote", requireAuth, requireVerified, zValidator("param", idParamSchema), async (c) => {
   const user = c.get("user")!;
-  const projectId = c.req.param("id");
+  const { id: projectId } = c.req.valid("param");
 
   const result = await db.transaction(async (tx) => {
-    const [project] = await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId));
+    const [project] = await tx
+      .select({ id: projects.id })
+      .from(projects)
+      .innerJoin(users, eq(projects.userId, users.id))
+      .where(and(eq(projects.id, projectId), ...visibleConditions(user.isAdmin)));
     if (!project) {
       return { error: "not_found" as const };
     }
@@ -110,15 +165,22 @@ galleryRoutes.post("/:id/upvote", requireAuth, async (c) => {
   return c.json(result);
 });
 
-// No requireAuth — a logged-out visitor should count too. Naive increment,
-// no per-viewer dedup, on purpose (see viewCount's comment in schema.ts).
-galleryRoutes.post("/:id/view", async (c) => {
-  const projectId = c.req.param("id");
+// Naive increment, no per-viewer dedup, on purpose (see viewCount's comment in
+// schema.ts). Only counts projects the gallery actually shows.
+galleryRoutes.post("/:id/view", requireAuth, zValidator("param", idParamSchema), async (c) => {
+  const { id: projectId } = c.req.valid("param");
 
   const [row] = await db
     .update(projects)
     .set({ viewCount: sql`${projects.viewCount} + 1` })
-    .where(eq(projects.id, projectId))
+    .where(
+      and(
+        eq(projects.id, projectId),
+        inArray(projects.status, [...GALLERY_STATUSES]),
+        eq(projects.hidden, false),
+        sql`exists (select 1 from users where users.id = projects.user_id and users.ysws_status = 'verified_eligible' and users.is_banned = false and users.hackatime_banned = false)`,
+      ),
+    )
     .returning({ viewCount: projects.viewCount });
 
   if (!row) {

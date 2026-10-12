@@ -1,0 +1,29 @@
+---
+// Per-day column chart (oldest to newest) with a hover title on each bar.
+// Each column is a full-height flex box so the bar's percentage height has a
+// definite parent to resolve against (without it the bars collapse to 0px).
+const { points, unit = "", color = "bg-app-mint" } = Astro.props as {
+  points: { date: string; count: number }[];
+  unit?: string;
+  color?: string;
+};
+const max = Math.max(1, ...points.map((p) => p.count));
+---
+
+<div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-5">
+  <div class="flex h-36 items-stretch gap-px">
+    {points.map((p) => (
+      <div class="group relative flex h-full flex-1 items-end" title={`${p.date}: ${p.count}${unit ? " " + unit : ""}`}>
+        <div
+          class={`w-full rounded-t transition-all group-hover:bg-app-gold ${p.count === 0 ? "bg-black/10" : `${color} border border-[#5c4429]/50`}`}
+          style={`height: ${p.count === 0 ? 3 : Math.max(6, (p.count / max) * 100)}%`}
+        />
+      </div>
+    ))}
+  </div>
+  <div class="mt-2 flex justify-between text-[10px] text-black/40">
+    <span>{points[0]?.date}</span>
+    <span>peak {max === 1 && points.every((p) => p.count === 0) ? 0 : max}</span>
+    <span>{points[points.length - 1]?.date}</span>
+  </div>
+</div>

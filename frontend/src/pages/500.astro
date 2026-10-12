@@ -1,0 +1,34 @@
+---
+// Shown when a page throws. No backend call here: this page must render even when the backend is
+// the thing that broke. Never shows the error itself.
+import "../styles/global.css";
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg" href="/logo.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex, nofollow" />
+		<title>Something went wrong - Cubed</title>
+	</head>
+	<body class="min-h-screen bg-[#f2ecdd] text-black" style="font-family: system-ui, -apple-system, sans-serif;">
+		<div class="flex min-h-screen flex-col items-center justify-center px-4 py-10 text-center">
+			<div class="w-full max-w-md rounded-lg border border-black/10 bg-white p-8 shadow-sm sm:p-10">
+				<p class="text-6xl font-bold sm:text-7xl">500</p>
+				<h1 class="mt-4 text-xl font-bold sm:text-2xl">Something went wrong on our side</h1>
+				<p class="mt-2 text-sm text-black/60 sm:text-base">
+					Please try again in a moment. If it keeps happening, message the Cubed team on Slack.
+				</p>
+				<div class="mt-8 flex flex-wrap items-center justify-center gap-3 text-sm font-bold">
+					<a href="/dashboard" data-astro-reload class="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700">
+						Try the dashboard
+					</a>
+					<a href="/" data-astro-reload class="rounded-md border border-black/10 bg-[#f2ecdd] px-4 py-2 hover:bg-black/5">
+						Home
+					</a>
+				</div>
+			</div>
+		</div>
+	</body>
+</html>

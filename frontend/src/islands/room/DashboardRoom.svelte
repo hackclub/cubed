@@ -36,7 +36,10 @@
   const galleryIcon = galleryIconImg.src;
   const shopIcon = shopIconImg.src;
 
+  import { setContext } from "svelte";
   import { apiFetch } from "../../lib/api-client";
+  import { ID_VERIFIED_CONTEXT } from "../../lib/verification";
+  import VerificationBanner from "./VerificationBanner.svelte";
   import DashboardHud from "./DashboardHud.svelte";
   import GalleryPopup from "./GalleryPopup.svelte";
   import ProfilePopup from "./ProfilePopup.svelte";
@@ -47,17 +50,23 @@
   let {
     user,
     galleryProjects,
+    galleryHasMore = false,
     ownProjects,
     shopItems,
     shopOrders,
     announcements,
     initialTransactions,
+    failedParts = [],
   } = $props();
 
   // Kept as local reactive state (seeded from the prop) so a nickname edit
   // saved inside ProfilePopup shows up live in the HUD without a full page
   // reload.
   let displayUser = $state({ ...user });
+  // Read by the popups to explain (instead of failing) submit/buy/upvote for
+  // people who haven't finished ID verification. Static: the banner's
+  // "I've verified" button reloads the page once the backend confirms.
+  setContext(ID_VERIFIED_CONTEXT, user.idVerified !== false);
 
   // Selected gallery/own-project detail mirrors into the URL as
   // `?gallery=<id>` or `?project=<id>` (mutually exclusive), so it's
@@ -286,6 +295,8 @@
       class={`${FULL_BLEED} pointer-events-none transition-transform duration-500 ease-out`}
       style={parallaxFull(BASE)}
       draggable="false"
+      loading="lazy"
+      decoding="async"
     />
 
     <!-- Projects (blackboard) -->
@@ -301,6 +312,8 @@
         alt=""
         class="h-full w-full transition-transform duration-200 ease-out group-hover:scale-[1.02] group-focus-visible:scale-[1.02]"
         draggable="false"
+      loading="lazy"
+      decoding="async"
       />
       <span
         class="pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg border-2 border-[#6b4a2b] bg-[#f0e2c9] px-4 py-2 text-base font-bold text-[#4a3220] opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -324,6 +337,8 @@
         alt=""
         class="h-full w-full transition-transform duration-200 ease-out group-hover:scale-[1.02] group-focus-visible:scale-[1.02]"
         draggable="false"
+      loading="lazy"
+      decoding="async"
       />
       <span
         class="pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg border-2 border-[#6b4a2b] bg-[#f0e2c9] px-4 py-2 text-base font-bold text-[#4a3220] opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -347,6 +362,8 @@
         alt=""
         class="h-full w-full transition-transform duration-200 ease-out group-hover:scale-[1.02] group-focus-visible:scale-[1.02]"
         draggable="false"
+      loading="lazy"
+      decoding="async"
       />
       <span
         class="pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg border-2 border-[#6b4a2b] bg-[#f0e2c9] px-4 py-2 text-base font-bold text-[#4a3220] opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
@@ -362,6 +379,8 @@
       class="absolute pointer-events-none transition-transform duration-500 ease-out"
       style={`${box(34.61, 65.28, 30.16, 16.6, { anchorY: "bottom" })} ${parallax(BASE)}`}
       draggable="false"
+      loading="lazy"
+      decoding="async"
     />
 
     <!-- Anchored to its own base (bottom), which rests on the stage. -->
@@ -371,6 +390,8 @@
       class="absolute pointer-events-none transition-transform duration-500 ease-out"
       style={`${box(50.08, 65.63, 2.81, 7.99, { anchorY: "bottom" })} ${parallax(BASE)}`}
       draggable="false"
+      loading="lazy"
+      decoding="async"
     />
 
     <!-- DOM order controls paint order where they overlap — leftDesk and
@@ -381,6 +402,8 @@
       class={`${FULL_BLEED} pointer-events-none transition-transform duration-500 ease-out`}
       style={parallaxFull(FOREGROUND, { foreground: true })}
       draggable="false"
+      loading="lazy"
+      decoding="async"
     />
     <!-- Nudged via nudgeXPct/nudgeYPct from its default registered spot. -->
     <img
@@ -389,6 +412,8 @@
       class={`${FULL_BLEED} pointer-events-none transition-transform duration-500 ease-out`}
       style={parallaxFull(FOREGROUND, { foreground: true, nudgeXPct: 4, nudgeYPct: 2.5 })}
       draggable="false"
+      loading="lazy"
+      decoding="async"
     />
     <img
       src={staircase}
@@ -396,6 +421,8 @@
       class={`${FULL_BLEED} pointer-events-none transition-transform duration-500 ease-out`}
       style={parallaxFull(FOREGROUND, { foreground: true })}
       draggable="false"
+      loading="lazy"
+      decoding="async"
     />
   </div>
 
@@ -435,12 +462,35 @@
     </button>
   </div>
 
+  {#if user.idVerified === false}
+    <VerificationBanner />
+  {/if}
+
+  {#if failedParts.length > 0}
+    <div
+      class="fixed left-1/2 top-16 z-40 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 rounded-none border-[4px] border-[#5c4429] bg-[#f0e2c9] p-3 text-sm shadow-lg"
+      role="alert"
+    >
+      <p class="font-bold text-[#4a3220]">
+        We couldn't load {failedParts.join(", ")}. What you see may be incomplete.
+      </p>
+      <button
+        type="button"
+        onclick={() => window.location.reload()}
+        class="mt-2 cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-3 py-1 text-xs font-bold uppercase tracking-wide hover:bg-black/5"
+      >
+        Try again
+      </button>
+    </div>
+  {/if}
+
   <DashboardHud user={displayUser} {unreadCount} onOpenProfile={() => open("profile")} onOpenNews={() => open("news")} />
 </div>
 
 {#if activePopup === "gallery"}
   <GalleryPopup
     projects={galleryProjects}
+    hasMore={galleryHasMore}
     onClose={close}
     initialProjectId={galleryDetailId}
     onProjectSelected={(id) => (galleryDetailId = id)}

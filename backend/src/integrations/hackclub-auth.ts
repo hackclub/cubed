@@ -26,7 +26,7 @@ export async function checkYswsEligibility(slackId: string): Promise<YswsStatus 
     const url = new URL("https://auth.hackclub.com/api/external/check");
     url.searchParams.set("slack_id", slackId);
 
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) {
       return null;
     }

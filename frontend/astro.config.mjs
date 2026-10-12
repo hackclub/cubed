@@ -13,7 +13,7 @@ const SITE = 'https://cubed.hackclub.com';
 // sync by hand (see the sitemap note below for why this can't be
 // auto-discovered). "/docs/" itself (the index) is deliberately excluded:
 // it's a redirect to the lowest-order doc, not a real page.
-const DOC_SLUGS = ['getting-started', 'submitting-a-project', 'the-shop', 'hackatime', 'good-journaling', 'faq'];
+const DOC_SLUGS = ['getting-started', 'what-counts', 'rules', 'faq', 'shipping', 'the-shop', 'hackatime', 'good-journaling'];
 
 // SSR is needed for the authenticated app routes (/dashboard, /onboarding,
 // /admin, ...), which check the session cookie server-side before

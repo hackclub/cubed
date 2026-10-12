@@ -66,6 +66,7 @@ export async function uploadProjectPhoto(file: File): Promise<{ url: string; cdn
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
+    signal: AbortSignal.timeout(30_000),
   });
 
   const body = (await response.json().catch(() => null)) as
@@ -88,6 +89,7 @@ export async function deleteProjectPhoto(cdnId: string): Promise<void> {
   const response = await fetch(`${CDN_API}/upload/${cdnId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!response.ok && response.status !== 404) {

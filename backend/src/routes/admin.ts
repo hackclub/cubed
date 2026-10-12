@@ -1,12 +1,20 @@
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { desc, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { announcements, orders, projects, shopItems, submissions, transactions, users } from "../db/schema.js";
+import { adminActions, announcements, orders, projects, shopItems, submissions, transactions, users } from "../db/schema.js";
 import { requireAuth, requireAdmin, type SessionContext } from "../lib/session.js";
-import { syncFromAirtable } from "../jobs/airtable-sync.js";
+import { runAirtableSync } from "../jobs/airtable-sync.js";
 import { syncEligibility } from "../jobs/eligibility-sync.js";
+import { runUsersSync } from "../jobs/users-sync.js";
+import { isRunning, runExclusive } from "../lib/exclusive.js";
+import { deleteProjectPhoto } from "../integrations/hackclub-cdn.js";
+import { ANALYTICS_RANGES, buildAnalytics } from "./admin-analytics.js";
+import { text } from "../lib/text.js";
+import { logAdminAction } from "../lib/audit.js";
 
 const announcementColumns = {
   id: announcements.id,
@@ -16,15 +24,15 @@ const announcementColumns = {
 };
 
 const announcementSchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  body: z.string().trim().min(1).max(5000),
+  title: text(1, 200),
+  body: text(1, 5000, true),
 });
 
 export const adminRoutes = new Hono<SessionContext>();
 
 adminRoutes.use("*", requireAuth, requireAdmin);
 
-adminRoutes.post("/announcements", zValidator("json", announcementSchema), async (c) => {
+adminRoutes.post("/announcements", bodyLimit({ maxSize: 100 * 1024 }), zValidator("json", announcementSchema), async (c) => {
   const user = c.get("user")!;
   const input = c.req.valid("json");
 
@@ -33,10 +41,12 @@ adminRoutes.post("/announcements", zValidator("json", announcementSchema), async
     .values({ title: input.title, body: input.body, createdBy: user.id })
     .returning(announcementColumns);
 
+  await logAdminAction({ actorId: user.id, action: "announcement.created", targetType: "announcement", targetId: row.id, details: row.title });
   return c.json(row, 201);
 });
 
-adminRoutes.patch("/announcements/:id", zValidator("json", announcementSchema.partial()), async (c) => {
+adminRoutes.patch("/announcements/:id", bodyLimit({ maxSize: 100 * 1024 }), zValidator("json", announcementSchema.partial()), async (c) => {
+  const user = c.get("user")!;
   const id = c.req.param("id");
   const input = c.req.valid("json");
 
@@ -47,13 +57,123 @@ adminRoutes.patch("/announcements/:id", zValidator("json", announcementSchema.pa
     .returning(announcementColumns);
   if (!row) return c.json({ error: "Not found" }, 404);
 
+  await logAdminAction({ actorId: user.id, action: "announcement.edited", targetType: "announcement", targetId: row.id, details: row.title });
   return c.json(row);
 });
 
 adminRoutes.delete("/announcements/:id", async (c) => {
+  const user = c.get("user")!;
   const id = c.req.param("id");
-  await db.delete(announcements).where(eq(announcements.id, id));
+  const deleted = await db.delete(announcements).where(eq(announcements.id, id)).returning({ id: announcements.id, title: announcements.title });
+  if (deleted[0]) {
+    await logAdminAction({ actorId: user.id, action: "announcement.deleted", targetType: "announcement", targetId: deleted[0].id, details: deleted[0].title });
+  }
   return c.body(null, 204);
+});
+
+const idParamSchema = z.object({ id: z.string().uuid() });
+
+// Gallery moderation. Reachable from the Gallery popup's detail view (admins
+// only) — there is no separate admin page for it.
+adminRoutes.patch(
+  "/projects/:id/hidden",
+  bodyLimit({ maxSize: 10 * 1024 }),
+  zValidator("param", idParamSchema),
+  zValidator("json", z.object({ hidden: z.boolean() })),
+  async (c) => {
+    const user = c.get("user")!;
+    const { id } = c.req.valid("param");
+    const { hidden } = c.req.valid("json");
+
+    const [row] = await db
+      .update(projects)
+      .set({ hidden })
+      .where(eq(projects.id, id))
+      .returning({ id: projects.id, hidden: projects.hidden, name: projects.name });
+    if (!row) return c.json({ error: "Not found" }, 404);
+
+    await logAdminAction({
+      actorId: user.id,
+      action: hidden ? "project.hidden" : "project.unhidden",
+      targetType: "project",
+      targetId: row.id,
+      details: row.name,
+    });
+    return c.json({ id: row.id, hidden: row.hidden });
+  },
+);
+
+adminRoutes.delete("/projects/:id/photo", zValidator("param", idParamSchema), async (c) => {
+  const user = c.get("user")!;
+  const { id } = c.req.valid("param");
+
+  const [existing] = await db
+    .select({ photoCdnId: projects.photoCdnId, name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, id));
+  if (!existing) return c.json({ error: "Not found" }, 404);
+
+  await db.update(projects).set({ photoUrl: null, photoCdnId: null }).where(eq(projects.id, id));
+  await logAdminAction({ actorId: user.id, action: "project.photo_removed", targetType: "project", targetId: id, details: existing.name });
+
+  // Best-effort — the photo is already gone from the app either way.
+  if (existing.photoCdnId) {
+    deleteProjectPhoto(existing.photoCdnId).catch((err) => {
+      console.error("Failed to delete moderated photo from the CDN", err instanceof Error ? err.message : err);
+    });
+  }
+
+  return c.body(null, 204);
+});
+
+// Replaces an impersonating/offensive nickname with a neutral one; the user
+// can pick a new one from their profile.
+adminRoutes.post("/users/:id/reset-nickname", zValidator("param", idParamSchema), async (c) => {
+  const user = c.get("user")!;
+  const { id } = c.req.valid("param");
+
+  const [before] = await db.select({ nickname: users.nickname }).from(users).where(eq(users.id, id));
+  const nickname = `user_${randomBytes(3).toString("hex")}`;
+  const [row] = await db
+    .update(users)
+    .set({ nickname })
+    .where(eq(users.id, id))
+    .returning({ id: users.id, nickname: users.nickname });
+  if (!row) return c.json({ error: "Not found" }, 404);
+
+  await logAdminAction({
+    actorId: user.id,
+    action: "user.nickname_reset",
+    targetType: "user",
+    targetId: row.id,
+    details: `${before?.nickname ?? "(none)"} -> ${row.nickname}`,
+  });
+  return c.json(row);
+});
+
+// The audit trail: newest first, 50 per page. Admins only (the whole router is).
+adminRoutes.get("/audit", zValidator("query", z.object({ page: z.coerce.number().int().min(1).max(10_000).default(1) })), async (c) => {
+  const { page } = c.req.valid("query");
+  const pageSize = 50;
+
+  const rows = await db
+    .select({
+      id: adminActions.id,
+      action: adminActions.action,
+      targetType: adminActions.targetType,
+      targetId: adminActions.targetId,
+      details: adminActions.details,
+      createdAt: adminActions.createdAt,
+      actorNickname: users.nickname,
+      actorId: adminActions.actorId,
+    })
+    .from(adminActions)
+    .leftJoin(users, eq(adminActions.actorId, users.id))
+    .orderBy(desc(adminActions.createdAt))
+    .limit(pageSize + 1)
+    .offset((page - 1) * pageSize);
+
+  return c.json({ items: rows.slice(0, pageSize), hasMore: rows.length > pageSize, page });
 });
 
 adminRoutes.get("/stats", async (c) => {
@@ -80,145 +200,44 @@ adminRoutes.get("/stats", async (c) => {
   });
 });
 
-// One combined payload rather than five separate endpoints — the page
-// needs all of it up front, and this is low-traffic/admin-only.
-adminRoutes.get("/analytics", async (c) => {
-  const days = Math.min(90, Math.max(1, Number(c.req.query("days") ?? "30")));
-  const since = new Date();
-  since.setHours(0, 0, 0, 0);
-  since.setDate(since.getDate() - (days - 1));
+const analyticsQuerySchema = z.object({
+  days: z.coerce
+    .number()
+    .refine((n) => (ANALYTICS_RANGES as readonly number[]).includes(n), "Unsupported range")
+    .default(30),
+});
 
-  // GROUP BY skips zero-signup days — gaps filled in afterward in JS
-  // rather than a generate_series query.
-  const signupRows = await db
-    .select({
-      date: sql<string>`to_char(date_trunc('day', ${users.createdAt}), 'YYYY-MM-DD')`,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(users)
-    .where(gte(users.createdAt, since))
-    .groupBy(sql`date_trunc('day', ${users.createdAt})`)
-    .orderBy(sql`date_trunc('day', ${users.createdAt})`);
-  const signupMap = new Map(signupRows.map((r) => [r.date, r.count]));
-  const signupsPerDay = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    signupsPerDay.push({ date: key, count: signupMap.get(key) ?? 0 });
-  }
-
-  // Free-text responses capped at 50 most recent to keep the payload bounded.
-  const heardAboutRows = await db
-    .select({ source: users.heardAboutSource, count: sql<number>`count(*)::int` })
-    .from(users)
-    .where(isNotNull(users.heardAboutSource))
-    .groupBy(users.heardAboutSource);
-
-  const heardAboutResponses = await db
-    .select({
-      nickname: users.nickname,
-      source: users.heardAboutSource,
-      detail: users.heardAboutDetail,
-      createdAt: users.createdAt,
-    })
-    .from(users)
-    .where(isNotNull(users.heardAboutDetail))
-    .orderBy(desc(users.createdAt))
-    .limit(50);
-
-  const projectsByStatus = await db
-    .select({ status: projects.status, count: sql<number>`count(*)::int` })
-    .from(projects)
-    .groupBy(projects.status);
-
-  // Rate is only meaningful over *decided* submissions — pending ones
-  // haven't gone either way yet, so they're excluded from the denominator.
-  const [reviewRow] = await db
-    .select({
-      approved: sql<number>`count(*) filter (where ${submissions.status} = 'accepted')::int`,
-      rejected: sql<number>`count(*) filter (where ${submissions.status} = 'rejected')::int`,
-      pending: sql<number>`count(*) filter (where ${submissions.status} = 'pending')::int`,
-      totalHoursFunded: sql<number>`coalesce(sum(${submissions.approvedHours}) filter (where ${submissions.status} = 'accepted'), 0)::float`,
-      avgApprovedHours: sql<number>`coalesce(avg(${submissions.approvedHours}) filter (where ${submissions.status} = 'accepted'), 0)::float`,
-    })
-    .from(submissions);
-  const decided = reviewRow.approved + reviewRow.rejected;
-  const approvalRate = decided > 0 ? Math.round((reviewRow.approved / decided) * 100) : null;
-
-  const [economyRow] = await db
-    .select({
-      totalEarned: sql<number>`coalesce(sum(case when ${transactions.type} = 'earned' then ${transactions.amount} else 0 end), 0)::int`,
-      totalSpent: sql<number>`coalesce(sum(case when ${transactions.type} = 'spent' then ${transactions.amount} else 0 end), 0)::int`,
-    })
-    .from(transactions);
-
-  const [balanceRow] = await db
-    .select({ totalOutstanding: sql<number>`coalesce(sum(${users.molesBalance}), 0)::int` })
-    .from(users);
-
-  const [orderRow] = await db
-    .select({
-      totalOrders: sql<number>`count(*)::int`,
-      totalUnits: sql<number>`coalesce(sum(${orders.quantity}), 0)::int`,
-    })
-    .from(orders);
-
-  const [onboardingRow] = await db
-    .select({
-      totalUsers: sql<number>`count(*)::int`,
-      onboardedCount: sql<number>`count(*) filter (where ${users.onboardedAt} is not null)::int`,
-    })
-    .from(users);
-
-  // Top 5 by units sold — tells an admin what to restock/feature, which
-  // nothing else on this page currently surfaces at the item level.
-  const topShopItems = await db
-    .select({
-      name: shopItems.name,
-      unitsSold: sql<number>`coalesce(sum(${orders.quantity}), 0)::int`,
-      molesSpent: sql<number>`coalesce(sum(${orders.pricePaid}), 0)::int`,
-    })
-    .from(orders)
-    .innerJoin(shopItems, eq(orders.shopItemId, shopItems.id))
-    .groupBy(shopItems.id, shopItems.name)
-    .orderBy(desc(sql`sum(${orders.quantity})`))
-    .limit(5);
-
-  return c.json({
-    signupsPerDay,
-    heardAbout: heardAboutRows,
-    heardAboutResponses,
-    projectsByStatus,
-    review: {
-      approved: reviewRow.approved,
-      rejected: reviewRow.rejected,
-      pending: reviewRow.pending,
-      approvalRate,
-      totalHoursFunded: reviewRow.totalHoursFunded,
-      avgApprovedHours: reviewRow.avgApprovedHours,
-    },
-    economy: {
-      totalEarned: economyRow.totalEarned,
-      totalSpent: economyRow.totalSpent,
-      totalOutstanding: balanceRow.totalOutstanding,
-      totalOrders: orderRow.totalOrders,
-      totalUnitsOrdered: orderRow.totalUnits,
-    },
-    topShopItems,
-    onboarding: onboardingRow,
-  });
+adminRoutes.get("/analytics", zValidator("query", analyticsQuerySchema), async (c) => {
+  const { days } = c.req.valid("query");
+  return c.json(await buildAnalytics(days));
 });
 
 export const internalRoutes = new Hono<SessionContext>();
 
+// Manual triggers share a guard with the timers: if a run is already going, answer 409
+// instead of starting a second, overlapping one.
 internalRoutes.post("/sync/airtable", requireAuth, requireAdmin, async (c) => {
-  await syncFromAirtable();
+  const result = await runAirtableSync();
+  if (!result.ran) return c.json({ error: "already_running" }, 409);
+  await logAdminAction({ actorId: c.get("user")!.id, action: "sync.airtable_triggered" });
   return c.body(null, 204);
 });
 
-internalRoutes.post("/sync/eligibility", requireAuth, requireAdmin, async (c) => {
-  await syncEligibility();
+internalRoutes.post("/sync/users", requireAuth, requireAdmin, async (c) => {
+  const result = await runUsersSync();
+  if (!result.ran) return c.json({ error: "already_running" }, 409);
+  await logAdminAction({ actorId: c.get("user")!.id, action: "sync.users_triggered" });
   return c.body(null, 204);
+});
+
+// A full pass makes two external calls per person (minutes at 1000 users), far longer than one
+// HTTP request should stay open, so it runs in the background: 202 now, progress in the log.
+internalRoutes.post("/sync/eligibility", requireAuth, requireAdmin, async (c) => {
+  if (isRunning("eligibility-sync")) return c.json({ error: "already_running" }, 409);
+  await logAdminAction({ actorId: c.get("user")!.id, action: "sync.eligibility_triggered" });
+  console.log("Eligibility sync started");
+  runExclusive("eligibility-sync", syncEligibility)
+    .then(() => console.log("Eligibility sync finished"))
+    .catch((err) => console.error("Eligibility sync failed", err instanceof Error ? err.message : err));
+  return c.body(null, 202);
 });

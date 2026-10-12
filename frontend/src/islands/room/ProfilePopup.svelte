@@ -26,11 +26,14 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nickname: nickname.trim() }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error === "nickname_taken" ? "That nickname is already taken." : "");
+      }
       nicknameStatus = "Saved.";
       onNicknameSaved(nickname.trim());
-    } catch {
-      nicknameStatus = "Couldn't save, try again.";
+    } catch (err) {
+      nicknameStatus = err instanceof Error && err.message ? err.message : "Couldn't save, try again.";
     } finally {
       savingNickname = false;
     }
@@ -51,10 +54,21 @@
     }
   }
 
-  async function signOut() {
+  let signOutError = $state("");
+
+  // Only leaves once the server confirms the session is gone — redirecting
+  // after a failed call would look signed out while the cookie is still valid.
+  async function signOut(everywhere = false) {
     signingOut = true;
-    await apiFetch("/auth/logout", { method: "POST" });
-    window.location.href = "/";
+    signOutError = "";
+    try {
+      const res = await apiFetch(everywhere ? "/auth/logout-all" : "/auth/logout", { method: "POST" });
+      if (!res.ok) throw new Error();
+      window.location.href = "/";
+    } catch {
+      signOutError = "Couldn't sign out. Please try again.";
+      signingOut = false;
+    }
   }
 </script>
 
@@ -161,13 +175,26 @@
       </a>
     {/if}
 
-    <button
-      type="button"
-      onclick={signOut}
-      disabled={signingOut}
-      class="cursor-pointer rounded-none border-2 border-[#5c4429]/30 bg-white px-5 py-3 text-sm font-bold uppercase tracking-wide hover:bg-black hover:text-white disabled:opacity-30"
-    >
-      {signingOut ? "Signing out..." : "Sign out"}
-    </button>
+    {#if signOutError}
+      <p class="mb-2 text-sm text-app-orange">{signOutError}</p>
+    {/if}
+    <div class="flex flex-wrap gap-3">
+      <button
+        type="button"
+        onclick={() => signOut(false)}
+        disabled={signingOut}
+        class="cursor-pointer rounded-none border-2 border-[#5c4429]/30 bg-white px-5 py-3 text-sm font-bold uppercase tracking-wide hover:bg-black hover:text-white disabled:opacity-30"
+      >
+        {signingOut ? "Signing out..." : "Sign out"}
+      </button>
+      <button
+        type="button"
+        onclick={() => signOut(true)}
+        disabled={signingOut}
+        class="cursor-pointer rounded-none border-2 border-[#5c4429]/30 bg-white px-5 py-3 text-sm font-bold uppercase tracking-wide hover:bg-black hover:text-white disabled:opacity-30"
+      >
+        Sign out everywhere
+      </button>
+    </div>
   {/snippet}
 </PopupShell>

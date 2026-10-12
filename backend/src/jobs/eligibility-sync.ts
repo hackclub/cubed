@@ -2,7 +2,7 @@
 // login (routes/auth.ts) and again at the two real "gates" that matter
 // (submitting a project, buying from the shop — see lib/eligibility-check.ts).
 // This function survives only as a manual admin action (POST
-// /admin/internal/sync/eligibility) for bulk-refreshing every user at once,
+// /api/internal/sync/eligibility) for bulk-refreshing every user at once,
 // e.g. after a known mass Hackatime ban.
 
 import { eq } from "drizzle-orm";
