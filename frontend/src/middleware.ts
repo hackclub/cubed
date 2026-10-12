@@ -60,12 +60,12 @@ function backendOrigin(): string {
 
 const PAGE_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://plausible.io",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   // https: because project photos, Slack avatars and shop images come from several hosts.
   "img-src 'self' data: blob: https:",
-  `connect-src 'self' ${backendOrigin()}`.trim(),
+  `connect-src 'self' ${backendOrigin()} https://plausible.io`.trim(),
   "object-src 'none'",
   "base-uri 'self'",
   // Chromium also checks every redirect after a form submit against form-action: the landing
