@@ -1,0 +1,181 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788352268540,
+      "tag": "0000_even_skullbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788898432478,
+      "tag": "0001_chilly_the_watchers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788957086149,
+      "tag": "0002_small_exiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789986653594,
+      "tag": "0003_lying_zeigeist",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789991040851,
+      "tag": "0004_aromatic_prism",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790199229020,
+      "tag": "0005_hard_emma_frost",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790201340575,
+      "tag": "0006_vengeful_lady_vermin",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790205022872,
+      "tag": "0007_sparkling_colleen_wing",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790205039664,
+      "tag": "0008_cuddly_hairball",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790214330767,
+      "tag": "0009_safe_baron_strucker",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790239369041,
+      "tag": "0010_talented_serpent_society",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790247902031,
+      "tag": "0011_smart_longshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790343716841,
+      "tag": "0012_gifted_mongu",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790368540051,
+      "tag": "0013_chemical_apocalypse",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790479544318,
+      "tag": "0014_worried_blacklash",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790736227551,
+      "tag": "0015_married_captain_universe",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790828858741,
+      "tag": "0016_icy_emma_frost",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791237446219,
+      "tag": "0017_chilly_hercules",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791399573038,
+      "tag": "0018_dazzling_gambit",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791468426733,
+      "tag": "0019_daffy_union_jack",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791607549287,
+      "tag": "0020_useful_cloak",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791623368426,
+      "tag": "0021_sticky_brother_voodoo",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791661605181,
+      "tag": "0022_tiny_harry_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791666092709,
+      "tag": "0023_lying_xorn",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791761731460,
+      "tag": "0024_robust_harpoon",
+      "breakpoints": true
+    }
+  ]
+}

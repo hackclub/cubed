@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ALTER COLUMN "repo_url" DROP NOT NULL;

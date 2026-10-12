@@ -1,0 +1,21 @@
+---
+// One metric tile: big value, label, optional hint underneath.
+const { value, label, hint, tone = "plain" } = Astro.props as {
+  value: string | number;
+  label: string;
+  hint?: string;
+  tone?: "plain" | "mint" | "gold" | "orange";
+};
+const toneClass = {
+  plain: "bg-[#e4ecdf]",
+  mint: "bg-app-mint",
+  gold: "bg-app-gold/40",
+  orange: "bg-app-orange/50",
+}[tone];
+---
+
+<div class={`rounded-none border-2 border-[#5c4429] p-4 text-center ${toneClass}`}>
+  <p class="text-2xl font-bold">{value}</p>
+  <p class="text-xs font-bold uppercase tracking-wide text-black/60">{label}</p>
+  {hint && <p class="mt-1 text-[11px] text-black/45">{hint}</p>}
+</div>

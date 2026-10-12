@@ -1,0 +1,50 @@
+---
+// `headings` comes from Astro's content-collection `render(entry)` for
+// free, matching the built-in heading `id` slugs — no custom parsing needed.
+// Deliberately plain links, no "current section" highlighting — an
+// IntersectionObserver-based version of that was explicitly asked to be removed.
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+interface Props {
+  headings: Heading[];
+  hasSeeAlso: boolean;
+}
+
+const { headings, hasSeeAlso } = Astro.props;
+const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
+---
+
+{
+  (tocHeadings.length > 0 || hasSeeAlso) && (
+    <div>
+      <div class="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-black/50">
+        <span class="h-1.5 w-1.5 rounded-full bg-black/40" />
+        On this page
+      </div>
+      <div class="border-t border-black/10 pt-3">
+        <nav class="relative flex flex-col gap-0.5 border-l-2 border-black/10 pl-4 text-sm">
+          {tocHeadings.map((h) => (
+            <a
+              href={`#${h.slug}`}
+              class:list={[
+                "-ml-[18px] rounded-md py-1.5 pl-[18px] pr-2 text-black/60 hover:text-black",
+                h.depth === 3 && "pl-[30px]",
+              ]}
+            >
+              {h.text}
+            </a>
+          ))}
+          {hasSeeAlso && (
+            <a href="#see-also" class="-ml-[18px] rounded-md py-1.5 pl-[18px] pr-2 text-black/60 hover:text-black">
+              See also
+            </a>
+          )}
+        </nav>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "submissions" ADD COLUMN "airtable_missing_since" timestamp with time zone;

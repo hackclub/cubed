@@ -1,0 +1,10 @@
+# real secrets — never commit
+.env
+
+# ad-hoc local scripts that hit the real (dev sandbox) Airtable base —
+# never meant to be committed or shipped
+scratch_*.cjs
+
+# build output / deps
+dist/
+node_modules/

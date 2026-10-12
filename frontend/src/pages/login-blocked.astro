@@ -1,0 +1,38 @@
+---
+// People who are blocked from logging in go here
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import { BLOCK_REASONS, getBlockCopy, type BlockReason } from "../lib/eligibility-copy";
+
+const reasonParam = Astro.url.searchParams.get("reason");
+const reason = BLOCK_REASONS.includes(reasonParam as BlockReason) ? (reasonParam as BlockReason) : null;
+
+if (!reason) {
+  return Astro.redirect("/");
+}
+
+const { heading, body, showAuthCta } = getBlockCopy(reason);
+---
+
+<DashboardLayout title="Can't participate">
+  <div class="flex min-h-screen items-center justify-center bg-[#cfe0d5] p-4">
+    <div class="w-full max-w-md rounded-none border-[8px] border-[#5c4429] bg-white p-6 text-center sm:border-[10px] sm:p-8">
+      <h1 class="font-anta text-3xl font-bold text-[#2e4a3d] sm:text-4xl">{heading}</h1>
+      <p class="mt-4 text-black/70">{body}</p>
+
+      {showAuthCta && (
+        <a
+          href="https://auth.hackclub.com"
+          target="_blank"
+          rel="noreferrer"
+          class="mt-6 inline-block cursor-pointer rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] px-5 py-3 font-bold text-[#3d5245] hover:bg-white"
+        >
+          Go to Hack Club Auth
+        </a>
+      )}
+
+      <div class="mt-6 border-t-2 border-[#5c4429]/20 pt-4">
+        <a href="/" class="text-sm font-bold text-black/50 underline hover:text-black">Back home</a>
+      </div>
+    </div>
+  </div>
+</DashboardLayout>

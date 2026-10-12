@@ -1,0 +1,22 @@
+---
+// Labelled horizontal bars; `pct` (0-100) is the bar width, `value` the right-hand text.
+const { rows, color = "bg-app-mint", labelWidth = "w-40" } = Astro.props as {
+  rows: { label: string; pct: number; value: string; hint?: string }[];
+  color?: string;
+  labelWidth?: string;
+};
+---
+
+<div class="flex flex-col gap-2 rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-5">
+  {rows.map((r) => (
+    <div class="flex items-center gap-3">
+      <span class={`${labelWidth} shrink-0 text-xs font-bold uppercase tracking-wide`}>{r.label}</span>
+      <div class="h-4 flex-1 overflow-hidden rounded-full bg-white">
+        <div class={`h-full rounded-full ${color}`} style={`width: ${Math.min(100, Math.max(0, r.pct))}%`} />
+      </div>
+      <span class="w-28 shrink-0 text-right text-xs font-bold">
+        {r.value}{r.hint && <span class="font-normal text-black/45"> {r.hint}</span>}
+      </span>
+    </div>
+  ))}
+</div>

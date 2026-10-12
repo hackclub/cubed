@@ -1,0 +1,10 @@
+---
+// middleware.ts redirects anyone who isn't onboarded
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import OnboardingWizard from "../islands/OnboardingWizard.svelte";
+---
+
+<DashboardLayout title="Onboarding">
+  <div class="app-grid-bg"></div>
+  <OnboardingWizard client:load />
+</DashboardLayout>

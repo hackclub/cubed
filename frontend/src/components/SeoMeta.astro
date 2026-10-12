@@ -1,0 +1,38 @@
+---
+// Shared <head> meta block — description, robots, canonical, Open Graph,
+// Twitter card. Every layout (Layout/DocsLayout/DashboardLayout/
+// AdminLayout) renders this inside its own <head>; each keeps setting its
+// own <title> the way it already did (the suffix conventions differ —
+// "Cubed YSWS" vs "{title} - Cubed" vs "{title} - Cubed Docs" — not worth
+// unifying just for this), passing that same string in as `title` here for
+// og:title/twitter:title. Absolute URLs are built from `site` in
+// astro.config.mjs, so this only needs a root-relative `image` path.
+interface Props {
+  title: string;
+  description: string;
+  image?: string;
+  noindex?: boolean;
+  type?: "website" | "article";
+}
+
+const { title, description, image = "/og-image.png", noindex = false, type = "website" } = Astro.props;
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const imageURL = new URL(image, Astro.site);
+---
+
+<meta name="description" content={description} />
+<meta name="robots" content={noindex ? "noindex, nofollow" : "index, follow"} />
+<link rel="canonical" href={canonicalURL} />
+
+<meta property="og:type" content={type} />
+<meta property="og:site_name" content="Cubed" />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:image" content={imageURL} />
+<meta property="og:url" content={canonicalURL} />
+
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={title} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={imageURL} />

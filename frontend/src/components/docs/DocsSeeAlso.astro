@@ -1,0 +1,50 @@
+---
+// No wrap-around by design — first doc has no "previous", last has no
+// "next", either side just renders nothing. The `!` (important) modifiers
+// below override DocsLayout's `[&_a]:text-blue-600` rule, which otherwise
+// applies to every link inside its `<article>`, these included.
+import type { CollectionEntry } from "astro:content";
+
+interface Props {
+  prevDoc: CollectionEntry<"docs"> | null;
+  nextDoc: CollectionEntry<"docs"> | null;
+}
+
+const { prevDoc, nextDoc } = Astro.props;
+---
+
+{
+  (prevDoc || nextDoc) && (
+    <section id="see-also" class="mt-12 scroll-mt-8 border-t border-black/10 pt-6">
+      <p class="mb-2 text-xs font-bold uppercase tracking-wide text-black/40">See also</p>
+      <div class="grid gap-3 sm:grid-cols-2">
+        {prevDoc ? (
+          <a
+            href={`/docs/${prevDoc.id}`}
+            class="flex items-center gap-3 rounded-lg border border-black/10 px-4 py-3 !text-black !no-underline transition-all hover:bg-black/5"
+          >
+            <span class="text-black/40">&larr;</span>
+            <span>
+              <span class="block text-xs text-black/50">Previous</span>
+              <span class="font-bold text-black">{prevDoc.data.title}</span>
+            </span>
+          </a>
+        ) : (
+          <div />
+        )}
+        {nextDoc && (
+          <a
+            href={`/docs/${nextDoc.id}`}
+            class="flex items-center justify-between gap-3 rounded-lg border border-black/10 px-4 py-3 !text-black !no-underline transition-all hover:bg-black/5 sm:text-right"
+          >
+            <span class="sm:order-2">
+              <span class="block text-xs text-black/50">Next</span>
+              <span class="font-bold text-black">{nextDoc.data.title}</span>
+            </span>
+            <span class="text-black/40 sm:order-3">&rarr;</span>
+          </a>
+        )}
+      </div>
+    </section>
+  )
+}

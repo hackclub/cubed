@@ -1,0 +1,38 @@
+---
+// /dashboard is a named exception to the rest of the app's design system —
+// a layered-photo scene (islands/room/DashboardRoom.svelte), not a page
+// built from AppLayout's sidebar/grid-background chrome. Just `<head>`
+// boilerplate plus a bare `<body>` — no sidebar, no drawer JS.
+import "../styles/app.css";
+import { ClientRouter } from "astro:transitions";
+import SeoMeta from "../components/SeoMeta.astro";
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg" href="/logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anta&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <ClientRouter />
+    <title>{title} - Cubed</title>
+    <!-- Every page using this layout (dashboard/onboarding/blocked/
+         login-blocked) is either login-gated or a one-off utility page —
+         noindex unconditionally, not a per-page opt-out. -->
+    <SeoMeta title={`${title} - Cubed`} description="Cubed dashboard." noindex />
+  </head>
+  <body class="app-shell min-h-screen">
+    <slot />
+  </body>
+</html>

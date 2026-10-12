@@ -1,0 +1,111 @@
+---
+// if an existing user is blocked they go here
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import { eligibilityBlockReason, getBlockCopy } from "../lib/eligibility-copy";
+
+const user = Astro.locals.user;
+
+if (!user) {
+  return Astro.redirect("/login");
+}
+
+const reason = eligibilityBlockReason(user.hackatimeBanned, user.yswsStatus);
+
+if (!reason) {
+  // most likely Not actually blocked (any more) 
+  return Astro.redirect("/dashboard");
+}
+
+const { heading, body, showAuthCta } = getBlockCopy(reason);
+---
+
+<DashboardLayout title="Can't participate ">
+  <div class="flex min-h-screen items-center justify-center bg-[#cfe0d5] p-4">
+    <div
+      id="blocked-card"
+      data-reason={reason}
+      class="w-full max-w-md rounded-none border-[8px] border-[#5c4429] bg-white p-6 text-center sm:border-[10px] sm:p-8"
+    >
+      <h1 class="font-anta text-3xl font-bold text-[#2e4a3d] sm:text-4xl">{heading}</h1>
+      <p class="mt-4 text-black/70">{body}</p>
+
+      {showAuthCta && (
+        <a
+          href="https://auth.hackclub.com"
+          target="_blank"
+          rel="noreferrer"
+          class="mt-6 inline-block cursor-pointer rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] px-5 py-3 font-bold text-[#3d5245] hover:bg-white"
+        >
+          Go to Hack Club Auth
+        </a>
+      )}
+
+      <button
+        type="button"
+        id="recheck-btn"
+        class="mt-6 cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-black/5 disabled:opacity-40"
+      >
+        Check again
+      </button>
+      <p id="recheck-status" class="mt-2 min-h-5 text-xs text-black/50"></p>
+
+      <div class="mt-4 border-t-2 border-[#5c4429]/20 pt-4">
+        <button
+          type="button"
+          id="sign-out-btn"
+          class="cursor-pointer text-sm font-bold text-black/50 underline hover:text-black"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  </div>
+</DashboardLayout>
+
+<script>
+  import { apiFetch } from "../lib/api-client";
+
+  // Stored flags only change on login or at a submit/buy, so a user who got
+  // unbanned or verified would stay stuck here — re-check live on arrival
+  // and on demand instead of requiring a DB flip or a re-login.
+  const card = document.getElementById("blocked-card");
+  const recheckBtn = document.getElementById("recheck-btn") as HTMLButtonElement | null;
+  const recheckStatus = document.getElementById("recheck-status");
+
+  async function recheck(manual: boolean) {
+    if (recheckBtn) recheckBtn.disabled = true;
+    if (manual && recheckStatus) recheckStatus.textContent = "Checking...";
+    try {
+      const res = await apiFetch("/me/recheck-eligibility", { method: "POST" });
+      if (!res.ok) throw new Error();
+      const { reason } = await res.json();
+      if (reason === null) {
+        window.location.href = "/dashboard";
+        return;
+      }
+      if (reason !== card?.dataset.reason) {
+        window.location.reload();
+        return;
+      }
+      if (manual && recheckStatus) recheckStatus.textContent = "Still not eligible.";
+    } catch {
+      if (manual && recheckStatus) recheckStatus.textContent = "Couldn't check right now. Try again in a moment.";
+    } finally {
+      if (recheckBtn) recheckBtn.disabled = false;
+    }
+  }
+
+  recheckBtn?.addEventListener("click", () => recheck(true));
+  recheck(false);
+
+  document.getElementById("sign-out-btn")?.addEventListener("click", async () => {
+    try {
+      const res = await apiFetch("/auth/logout", { method: "POST" });
+      if (!res.ok) throw new Error();
+      window.location.href = "/";
+    } catch {
+      const status = document.getElementById("recheck-status");
+      if (status) status.textContent = "Couldn't sign out. Please try again.";
+    }
+  });
+</script>

@@ -1,0 +1,72 @@
+---
+// Groups by the optional `section` frontmatter field (content.config.ts) —
+// ungrouped entries render flat, grouped ones nest under a collapsible
+// heading. One render site for both mobile and desktop: a single <details>
+// whose <summary> is hidden at lg: and up.
+import type { CollectionEntry } from "astro:content";
+
+interface Props {
+  allDocs: CollectionEntry<"docs">[];
+  currentId: string;
+}
+
+const { allDocs, currentId } = Astro.props;
+
+const user = Astro.locals.user;
+const backHref = user ? "/dashboard" : "/";
+const backLabel = user ? "Dashboard" : "Home";
+
+const ungrouped: CollectionEntry<"docs">[] = [];
+const sections = new Map<string, CollectionEntry<"docs">[]>();
+for (const doc of allDocs) {
+  if (doc.data.section) {
+    if (!sections.has(doc.data.section)) sections.set(doc.data.section, []);
+    sections.get(doc.data.section)!.push(doc);
+  } else {
+    ungrouped.push(doc);
+  }
+}
+
+function linkClass(id: string) {
+  return `block rounded px-3 py-1.5 text-sm ${id === currentId ? "bg-[#f2ecdd] font-bold text-[#2e4a3d]" : "text-[#e8ecda]/80 hover:bg-white/10 hover:text-white"}`;
+}
+---
+
+<div class="rounded-lg border-[6px] border-[#5c4429] bg-[#2e4a3d] lg:flex lg:min-h-[70vh] lg:max-h-[85vh] lg:flex-col lg:border-[8px]">
+  <details open class="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+    <summary class="cursor-pointer px-4 py-3 text-sm font-bold text-white lg:hidden">Sections</summary>
+    <div class="flex min-h-0 flex-1 flex-col gap-3 border-t border-white/10 px-4 py-4 lg:border-t-0">
+      <a
+        href={backHref}
+        class="block w-fit shrink-0 rounded border-2 border-[#e8ecda]/40 px-3 py-1.5 text-sm font-bold text-[#e8ecda] transition-all hover:bg-white/10"
+      >
+        &larr; Back to {backLabel}
+      </a>
+
+      <!-- Only this list scrolls (the back button stays put above it) once
+           there are enough docs to exceed the ~85vh cap. -->
+      <nav class="flex flex-col gap-1 overflow-y-auto lg:min-h-0 lg:flex-1">
+        {ungrouped.map((doc) => (
+          <a href={`/docs/${doc.id}`} class={linkClass(doc.id)}>
+            {doc.data.title}
+          </a>
+        ))}
+
+        {[...sections.entries()].map(([section, docs]) => (
+          <details open class="mt-1">
+            <summary class="cursor-pointer rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-[#e8ecda]/60">
+              {section}
+            </summary>
+            <div class="mt-1 flex flex-col gap-1 border-l border-white/10 pl-3">
+              {docs.map((doc) => (
+                <a href={`/docs/${doc.id}`} class={linkClass(doc.id)}>
+                  {doc.data.title}
+                </a>
+              ))}
+            </div>
+          </details>
+        ))}
+      </nav>
+    </div>
+  </details>
+</div>

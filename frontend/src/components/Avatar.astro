@@ -1,0 +1,38 @@
+---
+// Square with a thick border, not a circle — Cubed's "boxy, chunky, square
+// shapes" look has no rounded corners anywhere else. Falls back to a
+// colored square with the nickname's first letter when there's no avatar URL.
+interface Props {
+  url: string | null;
+  nickname: string | null;
+  size?: "sm" | "md" | "lg";
+}
+
+const { url, nickname, size = "sm" } = Astro.props;
+
+const SIZE_CLASSES = {
+  sm: "h-8 w-8 border-2 text-xs",
+  md: "h-12 w-12 border-[3px] text-base",
+  lg: "h-20 w-20 border-[3px] text-3xl",
+} as const;
+
+const sizeClass = SIZE_CLASSES[size];
+const initial = (nickname ?? "?").trim().charAt(0).toUpperCase() || "?";
+---
+
+{
+  url ? (
+    <img
+      src={url}
+      alt={nickname ? `${nickname}'s avatar` : "avatar"}
+      class={`shrink-0 border-black object-cover ${sizeClass}`}
+    />
+  ) : (
+    <div
+      class={`grid shrink-0 place-items-center border-black bg-app-mint font-bold ${sizeClass}`}
+      aria-hidden="true"
+    >
+      {initial}
+    </div>
+  )
+}

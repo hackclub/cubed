@@ -1,0 +1,14 @@
+---
+// Where a brand-new, not-yet-ID-verified person lands after Hack Club Auth login
+// (backend/src/routes/auth.ts). Public on purpose: they have no account or
+// session yet — the backend holds their identity in a short-lived signed cookie.
+// ?blocked=1: this browser already answered "12 or under" / "19 or older".
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import AgeScreen from "../islands/AgeScreen.svelte";
+
+const blocked = Astro.url.searchParams.get("blocked") === "1";
+---
+
+<DashboardLayout title="Join Cubed">
+  <AgeScreen client:load initiallyBlocked={blocked} />
+</DashboardLayout>

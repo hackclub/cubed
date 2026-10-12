@@ -1,0 +1,9 @@
+---
+// Sends visitors to the first doc (lowest `order`) rather than an empty page.
+import { getCollection } from "astro:content";
+
+const allDocs = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
+const first = allDocs[0];
+
+return Astro.redirect(first ? `/docs/${first.id}` : "/");
+---

@@ -1,0 +1,68 @@
+---
+
+import "../styles/app.css";
+import { ClientRouter } from "astro:transitions";
+import bgImg from "../Images/dashboard/bg.png";
+import SeoMeta from "../components/SeoMeta.astro";
+
+interface Props {
+  title: string;
+  requireAdmin?: boolean;
+}
+
+const { title, requireAdmin = false } = Astro.props;
+
+// Middleware (src/middleware.ts) already resolved and redirected if absent.
+const user = Astro.locals.user!;
+
+const forbidden = requireAdmin && !user.isAdmin;
+if (forbidden) {
+  Astro.response.status = 403;
+}
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg" href="/logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anta&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <ClientRouter />
+    <title>{title} - Cubed</title>
+    <SeoMeta title={`${title} - Cubed`} description="Cubed admin panel." noindex />
+  </head>
+  <body class="app-shell relative min-h-screen">
+    <div class="fixed inset-0 -z-10 overflow-hidden bg-[#c7e9ff]">
+      <img src={bgImg.src} alt="" class="h-full w-full scale-110 object-cover blur-md" />
+    </div>
+
+    <div class="mx-auto max-w-5xl p-5 sm:p-10">
+      <a
+        href="/dashboard"
+        class="mb-6 inline-block w-fit rounded-none border-2 border-[#5c4429] bg-[#f0e2c9]/90 px-4 py-2 text-sm font-bold uppercase tracking-wide text-[#4a3220] backdrop-blur-sm transition-all hover:bg-[#e4d1ac]"
+      >
+        &larr; Back to Dashboard
+      </a>
+
+      {
+        forbidden ? (
+          <div class="rounded-none border-2 border-[#5c4429] bg-app-orange/40 p-8 backdrop-blur-sm">
+            <h1 class="mb-2 text-2xl" style="font-family: var(--font-anta);">
+              Forbidden
+            </h1>
+            <p>You don't have access to this page.</p>
+          </div>
+        ) : (
+          <div class="rounded-none border-[6px] border-[#5c4429] bg-[#f2ecdd]/95 p-5 backdrop-blur-sm sm:p-8">
+            <slot />
+          </div>
+        )
+      }
+    </div>
+  </body>
+</html>

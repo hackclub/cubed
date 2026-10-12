@@ -1,0 +1,62 @@
+---
+// Everything interactive lives in DashboardRoom.svelte and its popups
+// this file's is just the server-side prefetch every popup
+import DashboardLayout from "../layouts/DashboardLayout.astro";
+import DashboardRoom from "../islands/room/DashboardRoom.svelte";
+import { serverApiFetch } from "../lib/api";
+
+const user = Astro.locals.user!;
+
+const [announcementsRes, ownProjectsRes, shopItemsRes, shopOrdersRes, galleryRes, transactionsRes] =
+  await Promise.all([
+    serverApiFetch(Astro.request, "/announcements"),
+    serverApiFetch(Astro.request, "/projects"),
+    serverApiFetch(Astro.request, "/shop"),
+    serverApiFetch(Astro.request, "/shop/orders"),
+    serverApiFetch(Astro.request, "/gallery"),
+    serverApiFetch(Astro.request, "/me/transactions?page=1"),
+  ]);
+
+// An empty list from a failed request would look like "you have nothing", so failures are named.
+const failedParts = [
+  [announcementsRes, "news"],
+  [ownProjectsRes, "your projects"],
+  [shopItemsRes, "the shop"],
+  [shopOrdersRes, "your orders"],
+  [galleryRes, "the gallery"],
+  [transactionsRes, "your moles history"],
+]
+  .filter(([res]) => !(res as Response).ok)
+  .map(([, name]) => name as string);
+
+const announcements = announcementsRes.ok ? await announcementsRes.json() : [];
+const ownProjects = ownProjectsRes.ok ? await ownProjectsRes.json() : [];
+const shopItems = shopItemsRes.ok ? await shopItemsRes.json() : [];
+const shopOrders = shopOrdersRes.ok ? await shopOrdersRes.json() : [];
+// First page only — GalleryPopup loads more, and runs search/sort/filter, on the server.
+const gallery = galleryRes.ok ? await galleryRes.json() : { items: [], hasMore: false };
+const initialTransactions = transactionsRes.ok ? await transactionsRes.json() : [];
+---
+
+<DashboardLayout title="Dashboard">
+  <DashboardRoom
+    client:load
+    user={{
+      id: user.id,
+      nickname: user.nickname,
+      email: user.email,
+      avatarUrl: user.avatarUrl,
+      isAdmin: user.isAdmin,
+      molesBalance: user.molesBalance,
+      idVerified: user.yswsStatus === "verified_eligible",
+    }}
+    galleryProjects={gallery.items}
+    galleryHasMore={gallery.hasMore}
+    {ownProjects}
+    {shopItems}
+    {shopOrders}
+    {announcements}
+    {initialTransactions}
+    {failedParts}
+  />
+</DashboardLayout>

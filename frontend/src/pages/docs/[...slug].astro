@@ -1,0 +1,40 @@
+---
+// Looks up content per-request with `getEntry()` rather than
+// `getStaticPaths()`, consistent with the rest of the app's SSR mode — a
+// new .md file shows up immediately without a rebuild.
+import { getCollection, getEntry, render } from "astro:content";
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import DocsNav from "../../components/docs/DocsNav.astro";
+import DocsToc from "../../components/docs/DocsToc.astro";
+import DocsSeeAlso from "../../components/docs/DocsSeeAlso.astro";
+
+const slug = Astro.params.slug;
+const entry = slug ? await getEntry("docs", slug) : undefined;
+
+if (!entry) {
+  // Rewrites (not redirects) to the docs-themed branch of 404.astro — see
+  // that file's own comment for why `?section=docs` is passed explicitly.
+  return Astro.rewrite("/404?section=docs");
+}
+
+const { Content, headings } = await render(entry);
+
+// Same sorted-by-order list drives both the nav and "See also", so prev/next always matches nav order.
+const allDocs = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
+const currentIndex = allDocs.findIndex((doc) => doc.id === entry.id);
+const prevDoc = currentIndex > 0 ? allDocs[currentIndex - 1] : null;
+const nextDoc = currentIndex >= 0 ? allDocs[currentIndex + 1] ?? null : null;
+---
+
+<DocsLayout title={entry.data.title} description={entry.data.description}>
+  <Fragment slot="nav">
+    <DocsNav {allDocs} currentId={entry.id} />
+  </Fragment>
+  <Fragment slot="toc">
+    <DocsToc {headings} hasSeeAlso={!!(prevDoc || nextDoc)} />
+  </Fragment>
+  {entry.data.section && <p class="mb-1 text-xs font-bold uppercase tracking-wide text-black/40">{entry.data.section}</p>}
+  <h1>{entry.data.title}</h1>
+  <Content />
+  <DocsSeeAlso {prevDoc} {nextDoc} />
+</DocsLayout>

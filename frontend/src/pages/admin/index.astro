@@ -1,0 +1,211 @@
+---
+// Deliberately minimal: post announcements and see read-only aggregate
+// stats. Nothing here lets an admin see private user data, approve/reject
+// a submission (Airtable only, by design), or issue refunds — so plain
+// HTML forms are enough, no Svelte island needed. Gated three ways:
+// AdminLayout's requireAdmin, middleware.ts's /admin/* redirect, and every
+// /api/admin/* route requiring `user.is_admin` server-side independently.
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import { serverApiFetch } from "../../lib/api";
+
+const [statsRes, announcementsRes] = await Promise.all([
+  serverApiFetch(Astro.request, "/admin/stats"),
+  serverApiFetch(Astro.request, "/announcements"),
+]);
+
+const stats = statsRes.ok ? await statsRes.json() : null;
+const announcements = announcementsRes.ok ? await announcementsRes.json() : [];
+---
+
+<AdminLayout title="Admin" requireAdmin>
+  <h1 class="mb-8 text-3xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Admin</h1>
+
+  {
+    stats && (
+      <section class="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-4 text-center">
+          <p class="text-2xl font-bold">{stats.totalUsers}</p>
+          <p class="text-xs uppercase tracking-wide text-black/50">Users</p>
+        </div>
+        <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-4 text-center">
+          <p class="text-2xl font-bold">{stats.totalProjects}</p>
+          <p class="text-xs uppercase tracking-wide text-black/50">Projects</p>
+        </div>
+        <div class="rounded-none border-2 border-[#5c4429] bg-[#e4ecdf] p-4 text-center">
+          <p class="text-2xl font-bold">{stats.totalSubmitted}</p>
+          <p class="text-xs uppercase tracking-wide text-black/50">Submitted</p>
+        </div>
+        <div class="rounded-none border-2 border-[#5c4429] bg-app-mint p-4 text-center">
+          <p class="text-2xl font-bold">{stats.totalApproved}</p>
+          <p class="text-xs uppercase tracking-wide text-black/60">Approved</p>
+        </div>
+        <div class="rounded-none border-2 border-[#5c4429] bg-app-orange/50 p-4 text-center">
+          <p class="text-2xl font-bold">{stats.totalRejected}</p>
+          <p class="text-xs uppercase tracking-wide text-black/60">Rejected</p>
+        </div>
+        <div class="rounded-none border-2 border-[#5c4429] bg-app-gold/40 p-4 text-center">
+          <p class="text-2xl font-bold">{stats.totalPending}</p>
+          <p class="text-xs uppercase tracking-wide text-black/60">Pending review</p>
+        </div>
+      </section>
+    )
+  }
+
+  <div class="mb-12 flex flex-wrap gap-3">
+    <a
+      href="/admin/analytics"
+      class="inline-block w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-5 py-2.5 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/30"
+    >
+      Detailed analytics &rarr;
+    </a>
+    <a
+      href="/admin/audit"
+      class="inline-block w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-white px-5 py-2.5 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/30"
+    >
+      Audit log &rarr;
+    </a>
+  </div>
+
+  <section>
+    <h2 class="mb-4 text-xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Announcements</h2>
+
+    <form id="new-announcement-form" class="mb-6 flex flex-col gap-3 rounded-none border-[6px] border-[#5c4429] bg-[#cfe0d5] p-5">
+      <label class="flex flex-col gap-1 text-sm font-bold">
+        Title
+        <input type="text" name="title" required maxlength="200" class="rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-2 font-normal outline-none focus:border-[#5c4429]" />
+      </label>
+      <label class="flex flex-col gap-1 text-sm font-bold">
+        Body
+        <textarea name="body" required maxlength="5000" rows="8" class="min-h-40 rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-2 font-normal outline-none focus:border-[#5c4429]"></textarea>
+      </label>
+      <button type="submit" class="w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-app-mint px-4 py-2 text-sm font-bold uppercase tracking-wide hover:bg-app-mint/70">
+        Post
+      </button>
+    </form>
+
+    <div class="flex flex-col gap-2">
+      {announcements.map((a: any) => (
+        <div class="flex flex-wrap items-start justify-between gap-4 rounded-none border-2 border-[#5c4429]/30 bg-[#e4ecdf] p-4" data-announcement-card={a.id}>
+          <div class="flex-1" data-view>
+            <p class="font-bold">{a.title}</p>
+            <p class="text-sm text-black/70">{a.body}</p>
+          </div>
+          <form class="hidden w-full flex-col gap-2" data-edit-form data-edit-id={a.id}>
+            <input
+              type="text"
+              name="title"
+              value={a.title}
+              required
+              maxlength="200"
+              class="rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-2 font-normal outline-none focus:border-[#5c4429]"
+            />
+            <textarea
+              name="body"
+              required
+              maxlength="5000"
+              rows="4"
+              class="rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-2 font-normal outline-none focus:border-[#5c4429]"
+            >{a.body}</textarea>
+            <div class="flex gap-2">
+              <button type="submit" class="w-fit cursor-pointer rounded-none border-2 border-[#5c4429] bg-app-mint px-3 py-1 text-xs font-bold uppercase hover:bg-app-mint/70">
+                Save
+              </button>
+              <button type="button" data-cancel-edit class="w-fit cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-1 text-xs font-bold uppercase hover:bg-black/5">
+                Cancel
+              </button>
+            </div>
+          </form>
+          <div class="flex shrink-0 gap-2" data-view-buttons>
+            <button
+              type="button"
+              data-edit-announcement={a.id}
+              class="cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-1 text-xs font-bold uppercase hover:bg-app-mint/30"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              data-delete-announcement={a.id}
+              class="cursor-pointer rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-1 text-xs font-bold uppercase hover:bg-app-orange"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  </section>
+</AdminLayout>
+
+<script is:inline define:vars={{ backendUrl: import.meta.env.PUBLIC_BACKEND_URL }}>
+  // No optimistic client-side updates — a full reload is simple and this page isn't used often.
+  async function sendJson(method, path, body) {
+    const res = await fetch(`${backendUrl}${path}`, {
+      method,
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "cubed" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error("Request failed");
+  }
+
+  document.getElementById("new-announcement-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget);
+    try {
+      await sendJson("POST", "/admin/announcements", { title: data.get("title"), body: data.get("body") });
+      window.location.reload();
+    } catch {
+      alert("Couldn't post that announcement.");
+    }
+  });
+
+  document.querySelectorAll("[data-delete-announcement]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const id = button.getAttribute("data-delete-announcement");
+      const res = await fetch(`${backendUrl}/admin/announcements/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "X-Requested-With": "cubed" },
+      });
+      if (res.ok) window.location.reload();
+    });
+  });
+
+  document.querySelectorAll("[data-announcement-card]").forEach((card) => {
+    const view = card.querySelector("[data-view]");
+    const viewButtons = card.querySelector("[data-view-buttons]");
+    const editForm = card.querySelector("[data-edit-form]");
+    const editButton = card.querySelector("[data-edit-announcement]");
+    const cancelButton = card.querySelector("[data-cancel-edit]");
+    if (!view || !viewButtons || !editForm || !editButton || !cancelButton) return;
+
+    function openEdit() {
+      view.classList.add("hidden");
+      viewButtons.classList.add("hidden");
+      editForm.classList.remove("hidden");
+      editForm.classList.add("flex");
+    }
+    function closeEdit() {
+      editForm.classList.add("hidden");
+      editForm.classList.remove("flex");
+      view.classList.remove("hidden");
+      viewButtons.classList.remove("hidden");
+    }
+
+    editButton.addEventListener("click", openEdit);
+    cancelButton.addEventListener("click", closeEdit);
+
+    editForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const id = editForm.getAttribute("data-edit-id");
+      const data = new FormData(editForm);
+      try {
+        await sendJson("PATCH", `/admin/announcements/${id}`, { title: data.get("title"), body: data.get("body") });
+        window.location.reload();
+      } catch {
+        alert("Couldn't save that announcement.");
+      }
+    });
+  });
+</script>

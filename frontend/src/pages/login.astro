@@ -1,0 +1,28 @@
+---
+// Kicks off the Hack Club Auth redirect, or displays message if auth comes back wit err
+const error = Astro.url.searchParams.get("error");
+
+if (!error) {
+  const email = Astro.url.searchParams.get("email");
+  const target = `${import.meta.env.PUBLIC_BACKEND_URL}/auth/login`;
+  return Astro.redirect(email ? `${target}?email=${encodeURIComponent(email)}` : target);
+}
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Log in - Cubed</title>
+  </head>
+  <body class="flex min-h-screen items-center justify-center bg-white p-4 text-black">
+    <div class="w-full max-w-md border-[3px] border-black p-5 text-center sm:p-8">
+      <h1 class="mb-3 text-xl font-bold">Couldn't log you in</h1>
+      <p class="mb-6 text-black/70">{error}</p>
+      <a href="/" class="border-[3px] border-black bg-white px-5 py-3 font-bold hover:bg-black hover:text-white">
+        Back home
+      </a>
+    </div>
+  </body>
+</html>

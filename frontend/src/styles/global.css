@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --font-anta: "Anta", "Segoe UI", sans-serif, system-ui;
+}
+
+
+:root {
+  --c-bg-hero: #20283a;
+  --c-bg-1: #8b5cf6;
+  --c-bg-2: #38bdf8;
+  --c-bg-3: #1c2336;
+  --c-bg-footer: #161c2d;
+  --c-info-box: #2563eb;
+  --c-text: #eef1fa;
+  --c-text-2: #c7cee2;
+  --c-text-3: #99a2bd;
+  --c-border: rgba(255, 255, 255, 0.22);
+  --c-hover: rgba(255, 255, 255, 0.08);
+  --c-divider: #46536f;
+  --c-divider-2: #771b1b;
+  --c-arrow: #8b0000;
+  --c-hex-bg: #20283a;
+  --c-hex-outer: #3b4a6e;
+  --c-hex-inner: #242c42;
+  --c-hex-hover-outer: #93a7d9;
+  --c-hex-hover-inner: #4a5881;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-mono);
+    background-color: var(--c-bg-hero);
+    color: var(--c-text);
+  }
+
+  /* makes the scroolbar pretty! */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--c-border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--c-border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}

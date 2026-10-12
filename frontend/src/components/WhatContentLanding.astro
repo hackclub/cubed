@@ -1,0 +1,165 @@
+---
+    import { Image } from "astro:assets";
+    import colorfulPB from "../Images/colorfulPB.svg";
+    import orphAwe from "../Images/orphAwe.png";
+    import prize1 from "../Images/prize1Poster.png";
+    import prize2 from "../Images/prize2Rubix.png";
+    import prize3 from "../Images/prize3tungtung.png";
+    import prize4 from "../Images/prize4calc.png";
+    import prize5 from "../Images/prize5tita.png";
+    import prize6 from "../Images/prize6sticker.png";
+
+    // Shared by every scattered sticker below: springy overshoot easing,
+    // hover scale, and the will-change/cursor/pointer-events triad that made
+    // hover actually register on an absolutely-positioned decorative div.
+    // Previously a `.prize` class in a <style> block — moved to Tailwind
+    // utilities per request, arbitrary-value brackets for the non-default
+    // duration/easing/scale numbers.
+    const stickerBase =
+        "cursor-pointer pointer-events-auto will-change-transform transition-transform duration-[400ms] ease-[cubic-bezier(0.34,1.8,0.64,1)] hover:scale-[1.15]";
+---
+
+<section class="relative flex flex-col bg-[var(--c-bg-1)]">
+    <div>
+        <Image
+                src={colorfulPB}
+                alt="colorful page breaker"
+                width={300}
+                height={300}
+                class="w-full h-auto"
+                />
+    </div>
+
+    <!--Orph -->
+    <div class={`z-0 absolute top-[15vh] left-[12vw] hidden rotate-[-2deg] hover:rotate-[5deg] lg:block ${stickerBase}`}>
+        <Image
+                src={orphAwe}
+                alt="orphoues in awe"
+                width={300}
+                height={300}
+                class="w-auto h-[15vh] max-w-[85vw] lg:h-[19vh] xl:h-[23vh]"
+                />
+    </div>
+
+    <!-- Prizes!! — desktop-only (lg:block) scattered stickers, restored to
+         their original positions/rotations, except prize2/prize3's
+         bottom-offset: those two sat close enough to the bottom that they
+         overlapped the "Absolutely 0 experience" text (which is pinned to
+         the section's true bottom edge) at completely ordinary sizes, not
+         just extreme ones — confirmed overlapping at a plain 1440x900.
+         Nudged both up just enough to clear it there.
+
+         Every image height below was `h-Nvh` with no brackets — not valid
+         Tailwind (arbitrary values need `h-[Nvh]`), so none of them ever
+         generated a height rule at all. Each div collapsed to 0x0, which
+         is *why* the hover animation looked broken: there was nothing
+         there to hover. It also meant the browser's lazy-loader never
+         considered these images "near the viewport" (zero-area target),
+         so the images themselves never even loaded — confirmed zero
+         network requests for them. Fixed by bracketing every one.
+
+         Each capped with max-w so the height-driven auto width can never
+         push its right edge past the viewport, regardless of the image's
+         own aspect ratio. -->
+
+    <div class={`absolute top-[55vh] left-[10vw] hidden rotate-[-3deg] hover:rotate-[4deg] lg:block ${stickerBase}`}>
+        <Image
+                src={prize1}
+                alt="Prize"
+                width={420}
+                height={420}
+                class="w-auto h-[13vh] max-w-[88vw] lg:h-[17vh] xl:h-[21vh]"
+                />
+    </div>
+
+    <div class={`absolute bottom-[13vh] left-[20vw] hidden rotate-[3deg] hover:rotate-[-4deg] lg:block ${stickerBase}`}>
+        <Image
+                src={prize2}
+                alt="Prize"
+                width={300}
+                height={300}
+                class="w-auto h-[10vh] max-w-[78vw] lg:h-[13vh] xl:h-[16vh]"
+                />
+    </div>
+
+    <div class={`absolute bottom-[11vh] left-[42vw] hidden rotate-[1deg] hover:rotate-[-4deg] lg:block ${stickerBase}`}>
+        <Image
+                src={prize3}
+                alt="Prize"
+                width={300}
+                height={300}
+                class="w-auto h-[11vh] max-w-[56vw] lg:h-[14vh] xl:h-[17vh]"
+                />
+    </div>
+    <div class={`absolute bottom-[12vh] left-[65vw] hidden rotate-[-3deg] hover:rotate-[4deg] lg:block ${stickerBase}`}>
+        <Image
+                src={prize4}
+                alt="Prize"
+                width={300}
+                height={300}
+                class="w-auto h-[9vh] max-w-[33vw] lg:h-[12vh] xl:h-[15vh]"
+                />
+    </div>
+
+    <div class={`absolute bottom-[14vh] left-[85vw] hidden rotate-[-4deg] hover:rotate-[4deg] lg:block ${stickerBase}`}>
+        <Image
+                src={prize5}
+                alt="Prize"
+                width={300}
+                height={300}
+                class="w-auto h-[12vh] max-w-[15vw] lg:h-[15vh] xl:h-[18vh]"
+                />
+    </div>
+
+    <div class={`absolute bottom-[35vh] left-[80vw] hidden rotate-[4deg] hover:rotate-[-4deg] lg:block ${stickerBase}`}>
+        <Image
+                src={prize6}
+                alt="Prize"
+                width={300}
+                height={300}
+                class="w-auto h-[12vh] max-w-[20vw] lg:h-[15vh] xl:h-[18vh]"
+                />
+    </div>
+
+    <!-- Content -->
+
+    <!-- pointer-events-none here, not on the section: this box is
+         min-h-[90vh] and stretches nearly full-bleed even in the empty
+         space around its own content, so with the default pointer-events
+         it sat on top (z-10) of the scattered stickers below and silently
+         ate every hover before it ever reached them. Re-enabled per-child
+         below on whichever ones are actually interactive. -->
+    <div class="relative z-10 flex min-h-[105vh] flex-col items-center px-4 py-12 pointer-events-none sm:py-16 md:px-0 lg:min-h-[90vh]">
+        <h1 class="pointer-events-auto text-center font-anta text-4xl text-black transition-transform duration-300 ease-in-out hover:scale-[1.04] sm:text-5xl md:text-6xl lg:text-7xl">Wait, what is Cubed???</h1>
+        <div class="mt-8 flex w-full max-w-xs items-center justify-center bg-[var(--c-info-box)] shadow-[16px_10px_4px_-1px_rgba(0,0,0,0.5)] shadow-black/30 sm:mt-10 sm:max-w-sm md:max-w-md lg:mt-16 lg:max-w-lg xl:mt-20">
+            <p class="px-6 py-6 text-center font-mono text-base font-bold sm:px-8 sm:py-8 sm:text-lg md:text-xl lg:px-12 lg:py-10 xl:px-14 xl:py-12">
+                Cubed is a free online program for creative teens aged 13–18.
+                 Build any science related project you want (calculators, simulations, websites),
+                 log your hours, and earn cool prizes!
+            </p>
+        </div>
+
+        <!-- Mobile/tablet-only stand-in for the desktop stickers above (which
+             are absolutely positioned with vw/vh offsets tuned for wide
+             desktop screens — they'd overlap each other and the text on a
+             narrower or shorter viewport). Only 3 of the 6 shown here (on
+             request) — bigger since there's fewer of them to fit. -->
+        <div class="pointer-events-auto mt-10 flex flex-wrap items-center justify-center gap-8 sm:gap-10 lg:hidden">
+            <Image src={prize3} alt="Prize" width={300} height={300} class="h-32 w-auto rotate-2 transition-transform duration-200 hover:scale-110 sm:h-40" />
+            <Image src={prize4} alt="Prize" width={300} height={300} class="h-32 w-auto -rotate-2 transition-transform duration-200 hover:scale-110 sm:h-40" />
+            <Image src={prize6} alt="Prize" width={300} height={300} class="h-32 w-auto -rotate-3 transition-transform duration-200 hover:scale-110 sm:h-40" />
+        </div>
+
+        <!-- Pinned to the section's own bottom edge unconditionally (not
+             flowed after the content above), so it's always at the very
+             bottom regardless of how tall the info box or sticker row end
+             up being — the entire point of it being asked for "no matter
+             what". z-20 keeps it above the (lower, unindexed) scattered
+             stickers if a short viewport ever brings one close to it. -->
+        <p class="absolute bottom-4 left-1/2 z-20 w-full max-w-xl -translate-x-1/2 px-4 text-center text-sm text-black sm:bottom-6 sm:text-base md:px-0">
+            Absolutely 0 experience needed. Guides and a community of over 100,000 teens are there to help you get started.
+        </p>
+    </div>
+</section>
+        <!-- Page breaker -->
+        <div class="bg-[var(--c-divider)] w-full h-2"></div>

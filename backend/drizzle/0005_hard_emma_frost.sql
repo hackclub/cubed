@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "last_read_announcements_at" timestamp with time zone;

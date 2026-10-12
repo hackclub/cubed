@@ -1,0 +1,91 @@
+---
+import { Image } from "astro:assets";
+import explosivePB from "../Images/explosivePB.png";
+
+const steps = [
+  {
+    number: "1",
+    title: "Sign up",
+    description: "Sign up using your email and hackclub account. After signing in you can view the dashboard!",
+    hex: "#FFFFFF",
+  },
+  {
+    number: "2",
+    title: "Join the Slack",
+    description: "Jump into the Hack Club Slack community to ask questions, make friends and talk to other Hack Clubbers",
+    hex: "#C0A9F0",
+  },
+  {
+    number: "3",
+    title: "Make your project",
+    description: "Build your super cool science project, and track your time using hackatime!",
+    hex: "#FFE600",
+  },
+  {
+    number: "4",
+    title: "Get Prizes",
+    description: "Ship and submit your project and awesome prizes will be sent your way!",
+    hex: "#86E3CE",
+  },
+]
+---
+
+<section class="relative w-full bg-[var(--c-bg-2)] px-4 py-12 sm:px-8 md:px-12">
+    <div class="mx-auto flex max-w-6xl flex-col gap-10 lg:flex-row lg:items-center lg:gap-16">
+
+        <!-- Title -->
+        <div class="lg:w-2/5 lg:flex-shrink-0">
+            <h1 class="text-center font-anta text-4xl font-bold leading-tight text-black sm:text-5xl lg:text-left lg:text-6xl">
+                How can i <span class="whitespace-nowrap">join ?!?!</span>
+            </h1>
+        </div>
+
+        <!-- Steps: each card owns its own number badge, pinned right on its
+             top-left corner. At lg+, cards alternate left/right
+             (`lg:mr-auto`/`lg:ml-auto` on a half-width box) with a negative
+             top margin on every row after the first, so opposite-side cards
+             overlap vertically — a zigzag instead of one tall straight
+             stack. No connecting line between cards (removed on request). -->
+        <div class="flex-1">
+            {steps.map((step, i) => {
+                const isEven = i % 2 === 0;
+                return (
+                    <div class={`relative mx-auto w-[90%] max-w-md lg:mx-0 lg:w-[calc(50%-1.25rem)] lg:max-w-none ${i > 0 ? "mt-12 lg:-mt-24" : ""} ${isEven ? "lg:mr-auto" : "lg:ml-auto"}`}>
+                        <div
+                            class="relative rounded-lg border-3 border-black p-6 sm:p-8"
+                            style={`background-color: ${step.hex}`}
+                        >
+                            {/* Inline style, not a Tailwind class, on purpose — step.hex is
+                                per-item runtime data; Tailwind's static scanner can't resolve
+                                a JS-interpolated arbitrary value like `bg-[${step.hex}]`. */}
+                            <div class="absolute -top-5 -left-5 z-10 grid h-10 w-10 shrink-0 place-items-center rounded-full border-3 border-black bg-white font-anta text-lg font-bold text-black sm:-top-6 sm:-left-6 sm:h-12 sm:w-12 sm:text-xl">
+                                {step.number}
+                            </div>
+                            <h3 class="mt-2 mb-2 font-anta text-xl font-bold text-black sm:text-2xl">{step.title}</h3>
+                            <p class="text-sm text-black sm:text-base">{step.description}</p>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    </div>
+
+    <!-- Below lg, the desktop absolute overlay further down (sized for a
+         wide, short section) doesn't fit a tall stacked layout, so this
+         mobile/tablet version flows normally right before the page-breaker
+         divider below — inside the section, so it inherits this section's
+         own blue background instead of needing its own, and sits flush
+         against the divider instead of leaving a gap of visible blue
+         between the art and the divider it's meant to rest on. -->
+    <div class="mt-4 -mb-12 flex justify-center overflow-hidden lg:hidden">
+        <Image
+            src={explosivePB}
+            alt="Page breaker"
+            width={760}
+            height={600}
+            class="h-40 w-auto sm:h-56"
+        />
+    </div>
+</section>
+<!-- Page breaker -->
+<div class="bg-[var(--c-divider-2)] w-full h-2"></div>

@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cubed
+      # From the root .env (see .env.example); the default only keeps an existing
+      # local volume working. NOTE: Postgres applies this only when the data
+      # volume is first created — see .env.example for changing it afterwards.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cubed}
+      POSTGRES_DB: cubed
+    ports:
+      # Loopback only — these are throwaway dev credentials, so the database
+      # must never be reachable from the LAN. (Docker's port publishing also
+      # bypasses host firewalls, so "0.0.0.0" here would expose it for real.)
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cubed"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Full-stack smoke test (`docker compose up`). For day-to-day development
+  # run just `docker compose up -d postgres` and use `npm run dev` in each service.
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      # backend/.env points at localhost, which inside this container is the
+      # container itself — use the compose service name instead.
+      DATABASE_URL: postgres://cubed:${POSTGRES_PASSWORD:-cubed}@postgres:5432/cubed
+    # The image doesn't migrate on its own (see backend/Dockerfile).
+    command: ["sh", "-c", "node dist/db/migrate.js && node dist/index.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8787:8787"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the client JS at build time, so it must be the URL a
+        # BROWSER can reach (not the internal service name).
+        PUBLIC_BACKEND_URL: http://localhost:8787/api
+    restart: unless-stopped
+    env_file: ./frontend/.env
+    environment:
+      # Server-side (SSR) calls stay inside the compose network.
+      BACKEND_URL: http://backend:8787/api
+    depends_on:
+      - backend
+    ports:
+      - "4321:4321"
+
+volumes:
+  postgres_data:

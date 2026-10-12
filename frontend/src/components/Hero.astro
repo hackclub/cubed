@@ -1,0 +1,84 @@
+---
+    import { Image } from "astro:assets";
+    import cubed from "../Images/cubed-logo.webp";
+---
+<div class="h-auto w-full flex flex-col">
+
+    <!-- Hack club picture -->
+     <a href="https://hackclub.com/" class="pointer-events-auto" target="_blank" rel="noopener noreferrer" aria-label="Link to Hack Club website">
+        <div class="absolute top-[-2vh] lg:top-[2vh] md:top-[1vh] sm:top-0 left-0 mt-[2vh]">
+            <Image 
+                src="https://assets.hackclub.com/flag-orpheus-left.svg" 
+                alt="Remote Logo"
+                width={300} 
+                height={300}
+                class="w-[30vw] lg:w-[12.5vw] md:w-[20vw] sm:w-[25vw] h-auto hover:scale-110 hover:mt-2.5 transition-all duration-300 ease-in-out"
+                />
+        </div>
+     </a>
+
+    <!-- The logo + main part of the hero -->
+    <div class="h-screen w-full flex flex-col items-center ">
+        <div class="mt-[6vh]">
+
+            <!-- text for Hack Club presents -->
+            <div class="h-auto w-full items-center flex flex-col justify-center">
+                <h3 class="font-anta font-bold text-[4.5vw] lg:text-[3vw] md:text-[5vw] sm:text-[5vw] tracking-wide pointer-events-auto text-[var(--c-text)]">
+                     Hack Club presents...
+                </h3>
+            </div>
+            
+            <!-- Big "cubed" title/logo -->
+            <div class="mt-[6vh] flex items-center justify-center ">
+                <Image 
+                    src={cubed} 
+                    alt="Project Logo" 
+                    class="w-[80vw] lg:w-[42.5vw] md:w-[65vw] sm:w-[75vw] h-auto hover:scale-[1.04] transition-all duration-300 pointer-events-auto"
+                    loading="eager" 
+                />
+            </div>
+
+            <!-- Program description -->
+            <div>
+                <h4 class="w-fit mx-auto font-anta font-medium text-[5vw] lg:text-[2vw] md:text-[4vw] sm:text-[4vw] tracking-tight mt-[3vh] text-center hover:scale-105 transition-all duration-200 ease-out pointer-events-auto text-[var(--c-text)]">
+                   Ship a science related project, <br> get science related prizes!
+                </h4>
+            </div>
+
+            <!-- Login CTA: email-hint form for a new visit, or a straight
+                 link back in if this browser already has a session. -->
+            <div class="mt-[3vh] flex flex-col w-full">
+                {Astro.locals.user ? (
+                    <div class="h-auto w-full flex flex-row justify-center gap-4 pointer-events-auto">
+                        <a
+                        href="/dashboard"
+                        class="bg-white text-black outline-4 outline-black/15 px-[2vw] py-[2vh] font-light text-2xl hover:scale-105 transition-all duration-200"
+                        >
+                            Go to dashboard →
+                        </a>
+                    </div>
+                ) : (
+                    <form
+                        method="get"
+                        action="/login"
+                        data-astro-reload
+                        class="h-auto w-full flex flex-col md:flex-row items-center md:justify-center gap-3 md:gap-4 pointer-events-auto"
+                    >
+                        <input
+                        type="email"
+                        name="email"
+                        placeholder="Enter your email..."
+                        class="block bg-white w-full md:w-[28vw] outline-4 outline-black/85 px-4 md:px-5 py-3 md:py-4 text-lg md:text-2xl text-black/80 text-center md:text-left hover:outline-black/75 md:hover:mr-2 transitions-all duration-200 ease-in-out"
+                        >
+                        <button
+                        type="submit"
+                        class="bg-white outline-4 outline-black/85 px-[6vw] md:px-[2vw] py-[2vh] text-lg md:text-2xl text-black hover:bg-grey-300 hover:outline-black/75 hover:scale-110 md:hover:ml-3 active:bg-white active:outline-black active:scale-85 active:ml-4 transitions-all duration-200 ease-in-out"
+                        >
+                            Get started →
+                        </button>
+                    </form>
+                )}
+            </div>
+        </div>
+    </div>
+</div>

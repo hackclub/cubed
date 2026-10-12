@@ -1,0 +1,87 @@
+---
+// Read-only list of admin and system actions (who did what, when). Visible to every admin.
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import { serverApiFetch } from "../../lib/api";
+
+const requested = Number(Astro.url.searchParams.get("page"));
+const page = Number.isInteger(requested) && requested >= 1 ? requested : 1;
+
+const res = await serverApiFetch(Astro.request, `/admin/audit?page=${page}`);
+const data: { items: any[]; hasMore: boolean } | null = res.ok ? await res.json() : null;
+
+const LABELS: Record<string, string> = {
+  "announcement.created": "Created an announcement",
+  "announcement.edited": "Edited an announcement",
+  "announcement.deleted": "Deleted an announcement",
+  "project.hidden": "Hid a project from the gallery",
+  "project.unhidden": "Unhid a project",
+  "project.photo_removed": "Removed a project photo",
+  "project.submit_recovered": "Recovered a stuck submission",
+  "user.nickname_reset": "Reset a nickname",
+  "user.role_changed": "Role changed in Airtable",
+  "order.refunded": "Refunded a stuck order",
+  "sync.airtable_triggered": "Ran the Airtable sync",
+  "sync.users_triggered": "Ran the Users sync",
+  "sync.eligibility_triggered": "Ran the eligibility sync",
+};
+
+const when = (value: string) => new Date(value).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+---
+
+<AdminLayout title="Audit log" requireAdmin>
+  <a
+    href="/admin"
+    class="mb-6 inline-block w-fit rounded-none border-2 border-[#5c4429] bg-[#f0e2c9]/90 px-4 py-2 text-sm font-bold uppercase tracking-wide text-[#4a3220] backdrop-blur-sm transition-all hover:bg-[#e4d1ac]"
+  >
+    &larr; Back to Admin
+  </a>
+
+  <h1 class="mb-2 text-3xl text-[#2e4a3d]" style="font-family: var(--font-anta);">Audit log</h1>
+  <p class="mb-6 text-sm text-black/60">
+    Every admin and moderation action, plus automatic changes to access, money and stuck work. Newest first, times in UTC. Anyone with the admin role can see this.
+  </p>
+
+  {!data ? (
+    <p class="text-sm text-black/60">Couldn't load the audit log right now. Refresh in a moment.</p>
+  ) : data.items.length === 0 ? (
+    <p class="text-sm text-black/50">Nothing has been recorded yet.</p>
+  ) : (
+    <div class="overflow-x-auto rounded-none border-2 border-[#5c4429] bg-[#e4ecdf]">
+      <table class="w-full min-w-[640px] text-left text-sm">
+        <thead class="border-b-2 border-[#5c4429]/40 bg-white/60 text-xs uppercase tracking-wide text-black/60">
+          <tr>
+            <th class="px-4 py-3">When</th>
+            <th class="px-4 py-3">Who</th>
+            <th class="px-4 py-3">What</th>
+            <th class="px-4 py-3">Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.items.map((row) => (
+            <tr class="border-b border-[#5c4429]/15 align-top last:border-0">
+              <td class="whitespace-nowrap px-4 py-3 text-black/60">{when(row.createdAt)}</td>
+              <td class="px-4 py-3 font-bold">{row.actorId ? (row.actorNickname ?? "(removed user)") : "System"}</td>
+              <td class="px-4 py-3">{LABELS[row.action] ?? row.action}</td>
+              <td class="px-4 py-3 text-black/70">
+                {row.details ?? ""}
+                {row.targetId && <span class="ml-1 font-mono text-[11px] text-black/40">{row.targetType} {String(row.targetId).slice(0, 8)}</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+
+  {data && (page > 1 || data.hasMore) && (
+    <div class="mt-4 flex items-center gap-3">
+      {page > 1 && (
+        <a href={`?page=${page - 1}`} class="rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wide hover:bg-[#5c4429]/10">&larr; Newer</a>
+      )}
+      <span class="text-xs text-black/50">Page {page}</span>
+      {data.hasMore && (
+        <a href={`?page=${page + 1}`} class="rounded-none border-2 border-[#5c4429]/40 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wide hover:bg-[#5c4429]/10">Older &rarr;</a>
+      )}
+    </div>
+  )}
+</AdminLayout>
