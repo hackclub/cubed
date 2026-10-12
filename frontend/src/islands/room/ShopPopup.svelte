@@ -1,6 +1,6 @@
 <script>
   // `items`/`orders` prefetched server-side (GET /shop, GET /shop/orders).
-  // Sorted by prices low to high with optional filtering per catagory
+  // Sorted by prices low to high with optional filtering per category
   import PopupShell from "./PopupShell.svelte";
   import BuyButton from "../BuyButton.svelte";
   import moleIcon from "../../Images/mole.png";

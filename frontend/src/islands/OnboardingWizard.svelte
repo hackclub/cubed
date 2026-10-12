@@ -197,7 +197,7 @@
       {:else}
         <h2 class="mb-8 text-4xl font-bold text-[#2e4a3d] sm:text-5xl">How to participate</h2>
         <p class="text-xl leading-relaxed text-black/80 sm:text-2xl">
-        Your all set now! <br> Jump into the dashboard to create your first project. From there, make sure to use hackatime to track your progress, open source your project and most importantly have fun.
+        You're all set now! <br> Jump into the dashboard to create your first project. From there, make sure to use hackatime to track your progress, open source your project and most importantly have fun.
         If you have any questions check out the docs or ask us #cubed on slack.
         </p>
       {/if}

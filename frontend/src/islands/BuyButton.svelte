@@ -231,7 +231,7 @@
         </label>
 
         <label class="flex flex-col gap-1 text-sm font-bold">
-          Delivery & fullfilment notes <span class="font-normal text-black/50">(optional)</span>
+          Delivery & fulfillment notes <span class="font-normal text-black/50">(optional)</span>
           <textarea
             bind:value={deliveryNotes}
             maxlength="1000"
