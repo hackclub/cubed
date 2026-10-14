@@ -4,8 +4,8 @@
    * An interactive hexagon (honeycomb) grid background, rendered on a single
    * <canvas> for performance (was ~560 DOM divs before).
    *
-   * Visuals match the original: honeycomb with 3px inset fill, springy scale
-   * bounce + color shift on hover.
+   * Visuals: a continuous honeycomb lattice (adjacent cells share one line of
+   * lineWidth px), springy scale bounce + color shift on hover.
    *
    * Usage:
    *   <div class="h-screen overflow-hidden">
@@ -15,25 +15,24 @@
   let {
     class: className = '',
     hexagonSize = 75,
-    hexagonMargin = 3,
+    lineWidth = 3,
   }: {
     class?: string;
     hexagonSize?: number;
-    hexagonMargin?: number;
+    lineWidth?: number;
   } = $props()
 
   let containerEl = $state<HTMLDivElement>()
   let canvasEl = $state<HTMLCanvasElement>()
 
-  // Hexagon geometry (same as before)
+  // Regular pointy-top hexagons on an equilateral lattice, so edges meet exactly.
   const hexW = $derived(hexagonSize)
-  const hexH = $derived(hexagonSize * 1.1)
-  const rowPitch = $derived(hexagonSize * 0.8)
-  const colStep = $derived(hexagonSize + hexagonMargin)
+  const hexH = $derived((hexagonSize * 2) / Math.sqrt(3))
+  const colStep = $derived(hexagonSize)
   const halfStep = $derived(colStep / 2)
-  // Inner hexagon is the outer one inset by hexagonMargin on all sides
-  const innerSx = $derived((hexW - 2 * hexagonMargin) / hexW)
-  const innerSy = $derived((hexH - 2 * hexagonMargin) / hexH)
+  const rowPitch = $derived((colStep * Math.sqrt(3)) / 2)
+  // Each cell is inset by half a line so neighbouring cells share one lineWidth line.
+  const innerS = $derived((hexW - lineWidth) / hexW)
 
   // Hexagon vertices relative to center — matches the original CSS clip-path
   // polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)
@@ -182,7 +181,7 @@
     ctx.fillStyle = outer
     ctx.fill()
     // Inner layer (hexagon fill color, inset by the margin)
-    hexPath(ctx, cx, cy, scale * innerSx, scale * innerSy)
+    hexPath(ctx, cx, cy, scale * innerS, scale * innerS)
     ctx.fillStyle = inner
     ctx.fill()
   }
@@ -209,7 +208,7 @@
       const offset = r % 2 === 1 ? halfStep : 0
       for (let c = 0; c < cols; c++) {
         hexagons.push({
-          cx: c * colStep + offset + hexagonMargin + hexW / 2,
+          cx: c * colStep + offset + hexW / 2,
           cy: (r + 1) * rowPitch - hexH / 2,
         })
       }
@@ -235,8 +234,10 @@
 
   function draw() {
     const ctx = canvasEl!.getContext('2d')!
+    // Both canvases share device-pixel dimensions, so blit 1:1 before applying the dpr transform.
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.drawImage(baseCanvas!, 0, 0)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.drawImage(baseCanvas!, 0, 0, canvasEl!.width, canvasEl!.height)
 
     // Lingering trail of recently hovered hexagons, fading out
     for (const tr of trail) {
