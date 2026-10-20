@@ -176,6 +176,13 @@
       "when": 1791761731460,
       "tag": "0024_robust_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792519967508,
+      "tag": "0025_hackatime_activity",
+      "breakpoints": true
     }
   ]
 }

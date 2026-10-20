@@ -41,6 +41,9 @@ export async function buildAnalytics(days: number) {
     activeToday,
     activeRange,
     dauRows,
+    visitorsToday,
+    visitorsRange,
+    visitorRows,
     trackingRow,
     funnelRow,
     signupRows,
@@ -82,6 +85,9 @@ export async function buildAnalytics(days: number) {
         count(*) filter (where age_declared_at is not null)::int as age_declared
       from users`),
     one(sql`select count(*)::int as c from users where last_seen_at > now() - interval '10 minutes'`),
+    one(sql`select count(*)::int as c from hackatime_activity where seconds > 0 and day = (now() at time zone 'utc')::date`),
+    one(sql`select count(distinct user_id)::int as c from hackatime_activity where seconds > 0 and day >= ${SD}`),
+    run(sql`select to_char(day, 'YYYY-MM-DD') as d, count(*)::int as c from hackatime_activity where seconds > 0 and day >= ${SD} group by day`),
     one(sql`select count(*)::int as c from user_activity where day = (now() at time zone 'utc')::date`),
     one(sql`select count(distinct user_id)::int as c from user_activity where day >= ${SD}`),
     run(sql`select to_char(day, 'YYYY-MM-DD') as d, count(*)::int as c from user_activity where day >= ${SD} group by day`),
@@ -219,6 +225,8 @@ export async function buildAnalytics(days: number) {
 
   const dau = fill(keys, dauRows);
   const dauSum = dau.reduce((sum, d) => sum + d.count, 0);
+  const visitors = fill(keys, visitorRows);
+  const visitorSum = visitors.reduce((sum, d) => sum + d.count, 0);
 
   const decidedAll = num(reviewRow.approved_all) + num(reviewRow.rejected_all);
   const approvedHoursAll = num(reviewRow.approved_hours_all);
@@ -236,14 +244,20 @@ export async function buildAnalytics(days: number) {
   const signedUp = funnelSteps[0].count;
 
   return {
-    range: { days, since: sinceDay, activityTrackingSince: trackingRow.first_day ?? null },
+    range: { days, since: sinceDay, visitorTrackingSince: trackingRow.first_day ?? null },
     activity: {
-      activeNow: num(activeNow.c),
       activeToday: num(activeToday.c),
       activeInRange: num(activeRange.c),
       avgDau: Math.round((dauSum / days) * 10) / 10,
       totalUsers: num(userRow.total),
       dauPerDay: dau,
+    },
+    visitors: {
+      now: num(activeNow.c),
+      today: num(visitorsToday.c),
+      inRange: num(visitorsRange.c),
+      avgPerDay: Math.round((visitorSum / days) * 10) / 10,
+      perDay: visitors,
     },
     onboarding: {
       totalUsers: num(userRow.total),

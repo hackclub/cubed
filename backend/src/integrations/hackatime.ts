@@ -73,3 +73,44 @@ export async function fetchHackatimeProjects(
     return null;
   }
 }
+
+export type HackatimeSpan = { start: number; end: number };
+
+// Public `/heartbeats/spans` (same visibility rules as `/stats`). Times are epoch seconds; start/end
+// are ISO timestamps, parsed by Hackatime in UTC. `filter_by_project` is comma-split on Hackatime's
+// side, so a name containing a comma gets its own exact `project=` request.
+export async function fetchHackatimeSpans(
+  slackId: string,
+  projectNames: string[],
+  start: Date,
+  end: Date,
+): Promise<HackatimeSpan[] | null> {
+  const plain = projectNames.filter((name) => !name.includes(","));
+  const queries = [
+    ...(plain.length > 0 ? [["filter_by_project", plain.join(",")]] : []),
+    ...projectNames.filter((name) => name.includes(",")).map((name) => ["project", name]),
+  ];
+
+  const spans: HackatimeSpan[] = [];
+  for (const [param, value] of queries) {
+    try {
+      const url = new URL(`https://hackatime.hackclub.com/api/v1/users/${encodeURIComponent(slackId)}/heartbeats/spans`);
+      url.searchParams.set("start_date", start.toISOString());
+      url.searchParams.set("end_date", end.toISOString());
+      url.searchParams.set(param, value);
+
+      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      if (!response.ok) return null;
+
+      const body = (await response.json()) as { spans?: { start_time: number; end_time: number }[] };
+      for (const span of body.spans ?? []) {
+        if (Number.isFinite(span.start_time) && Number.isFinite(span.end_time) && span.end_time > span.start_time) {
+          spans.push({ start: span.start_time, end: span.end_time });
+        }
+      }
+    } catch {
+      return null;
+    }
+  }
+  return spans;
+}

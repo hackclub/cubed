@@ -72,18 +72,31 @@ const sub = "mb-4 text-sm text-black/60";
       <section class="mb-10">
         <h2 class={h2} style="font-family: var(--font-anta);">Activity</h2>
         <p class={sub}>
-          Counted from when activity tracking started{data.range.activityTrackingSince ? ` (${data.range.activityTrackingSince})` : ""}; earlier days show zero.
+          Active = logged Hackatime time on a linked, non-rejected project that day (refreshed hourly). Visitors = opened the site while logged in, counted from when visitor tracking started{data.range.visitorTrackingSince ? ` (${data.range.visitorTrackingSince})` : ""}.
         </p>
-        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Stat value={data.activity.activeNow} label="Active now" hint="seen in last 10 min" tone="mint" />
-          <Stat value={data.activity.activeToday} label="Active today" hint="unique users today" />
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <Stat value={data.activity.activeToday} label="Active today" hint="coded on a linked project" tone="mint" />
           <Stat value={data.activity.avgDau} label={`Avg DAU (${days}d)`} hint="mean active per day" />
           <Stat value={data.activity.activeInRange} label={`Active in ${days}d`} hint="unique users in range" />
           <Stat value={data.activity.totalUsers} label="Total users" hint="all signups" />
           <Stat value={`${pct(data.activity.activeInRange, data.activity.totalUsers)}%`} label="Active share" hint={`of all users, ${days}d`} />
         </div>
-        <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Daily active users</h3>
-        <BarSeries points={data.activity.dauPerDay} unit="active" />
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat value={data.visitors.now} label="Visitors now" hint="seen in last 10 min" />
+          <Stat value={data.visitors.today} label="Visitors today" hint="unique users today" />
+          <Stat value={data.visitors.avgPerDay} label={`Avg visitors (${days}d)`} hint="mean per day" />
+          <Stat value={data.visitors.inRange} label={`Visitors in ${days}d`} hint="unique users in range" />
+        </div>
+        <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Daily active users</h3>
+            <BarSeries points={data.activity.dauPerDay} unit="active" />
+          </div>
+          <div>
+            <h3 class="mb-2 text-sm font-bold uppercase tracking-wide text-black/50">Daily visitors</h3>
+            <BarSeries points={data.visitors.perDay} unit="visitors" color="bg-app-gold" />
+          </div>
+        </div>
       </section>
 
       <section class="mb-10">

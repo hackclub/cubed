@@ -106,6 +106,9 @@ export const users = pgTable(
   heardAboutDetail: text("heard_about_detail"),
   // Throttled to ~every 2 minutes (lib/session.ts) — only for the admin "active now" metric.
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  // The linked Hackatime project names hackatime_activity was last fully rebuilt from
+  // (jobs/hackatime-activity.ts); a different set triggers a rebuild of the history.
+  hackatimeActivityNames: text("hackatime_activity_names"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // Backstop: no code path should ever drive a balance negative.
@@ -315,7 +318,7 @@ export const announcementReads = pgTable(
 );
 
 // One row per user per UTC day they used the app (written at most once a day per
-// user, see lib/session.ts). Day + user id only — powers the admin DAU/activity
+// user, see lib/session.ts). Day + user id only — powers the admin "Visitors"
 // metrics without recording what anyone did.
 export const userActivity = pgTable(
   "user_activity",
@@ -326,6 +329,20 @@ export const userActivity = pgTable(
     day: date("day", { mode: "string" }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.userId, table.day] }), index("user_activity_day_idx").on(table.day)],
+);
+
+// Hackatime seconds per user per UTC day on their linked (non-rejected) projects, from
+// jobs/hackatime-activity.ts. Powers the admin DAU metric (seconds > 0 = active).
+export const hackatimeActivity = pgTable(
+  "hackatime_activity",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    day: date("day", { mode: "string" }).notNull(),
+    seconds: integer("seconds").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.day] }), index("hackatime_activity_day_idx").on(table.day)],
 );
 
 // Who did what in the admin/moderation area (and the automatic actions that

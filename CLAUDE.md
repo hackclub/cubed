@@ -258,12 +258,15 @@ the actual code, the code wins — fix the file, don't trust the doc.
 
 ## Admin metrics
 `/admin/analytics` (`routes/admin-analytics.ts`, page `frontend/src/pages/admin/analytics.astro`) is
-read-only and UTC. Activity metrics come from the only per-user tracking we keep:
-`users.last_seen_at` (throttled to ~2 min) and `user_activity` (one row per user per
-UTC day — day + user id, nothing about what they did), both written fire-and-forget in
-`attachSession`, so DAU history only starts when tracking started. "Hours" are the
-`projects.hackatime_seconds` snapshots, not live Hackatime data (no per-day hours
-exist). The activation funnel counts users who EVER did each step, not a strict sequence.
+read-only and UTC. **DAU** = people with Hackatime time that UTC day on a linked
+project that isn't rejected (`hackatime_activity`, seconds per user per day, filled hourly by
+`jobs/hackatime-activity.ts` from Hackatime's public spans endpoint; a user's whole history
+since program start is rebuilt whenever their set of linked names changes). **Visitors** come
+from `users.last_seen_at` (throttled to ~2 min) and `user_activity` (one row per user per UTC
+day, nothing about what they did), both written fire-and-forget in `attachSession`, so visitor
+history only starts when that tracking started. "Hours" are the `projects.hackatime_seconds`
+snapshots, not live Hackatime data. The activation funnel counts users who EVER did each step,
+not a strict sequence.
 
 ## Users table (Airtable) — admin and manual bans
 `jobs/users-sync.ts` mirrors users into an Airtable "Users" table (enabled by

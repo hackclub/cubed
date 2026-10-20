@@ -21,6 +21,7 @@ import { scheduleAirtableSync } from "./jobs/airtable-sync.js";
 import { scheduleUsersSync } from "./jobs/users-sync.js";
 import { scheduleLoopsSync } from "./jobs/loops-sync.js";
 import { scheduleMaintenance } from "./jobs/maintenance.js";
+import { scheduleHackatimeActivitySync } from "./jobs/hackatime-activity.js";
 
 // Mounted under /api so a reverse proxy can share one domain with the Astro
 // frontend without colliding with a frontend page of the same name.
@@ -94,6 +95,7 @@ scheduleAirtableSync();
 scheduleUsersSync();
 scheduleLoopsSync();
 scheduleMaintenance();
+scheduleHackatimeActivitySync();
 
 // Periodic cleanup of expired session rows.
 setInterval(() => {
