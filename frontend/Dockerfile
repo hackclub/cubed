@@ -1,7 +1,9 @@
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# The platform passes runtime env vars (incl. NODE_ENV=production) in as build args, which
+# would make a plain `npm ci` skip devDependencies needed to build.
+RUN npm ci --include=dev
 COPY . .
 # Astro bakes PUBLIC_* vars into the shipped client JS at build time, not at
 # container start — so this must come in as a build ARG (set it in your

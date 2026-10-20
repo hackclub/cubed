@@ -1,7 +1,9 @@
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# The platform passes runtime env vars (incl. NODE_ENV=production) in as build args, which
+# would make a plain `npm ci` skip devDependencies like tsc.
+RUN npm ci --include=dev
 COPY . .
 RUN npm run build
 
