@@ -78,7 +78,7 @@
 
 <PopupShell
   title="Projects"
-  subtitle={selected ? "" : "All of your project! When you finsh, be sure to submit your project for review."}
+  subtitle={selected ? "" : "All of your projects! When you finsh one, make sure to submit it for review!"}
   maxWidth="max-w-4xl"
   onClose={() => (selected ? select(null) : onClose())}
 >
