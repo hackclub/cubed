@@ -85,7 +85,7 @@ export const config = {
   // date range). Not an env var on purpose — it's a program rule, not deploy config.
   programStartDate: "2026-06-01",
   // ...and stop counting here, whatever day they submit.
-  programEndDate: "2026-11-10",
+  programEndDate: "2026-11-21",
   hackclubAuth: {
     clientId: process.env.HACKCLUB_AUTH_CLIENT_ID!,
     clientSecret: process.env.HACKCLUB_AUTH_CLIENT_SECRET!,

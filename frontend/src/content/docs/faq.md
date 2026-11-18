@@ -11,7 +11,7 @@ Teens 13–18. It's completely free!
 
 ### When does Cubed run?
 
-We run from October 9 to November 9, 2026. Technically, any hours
+We run from October 9 to November 21, 2026. Technically, any hours
 you've logged on Hackatime since June 1, 2026 count.
 
 ### Does my project count as science?

@@ -11,7 +11,7 @@ description: How to get started with Cubed, Hack Club's YSWS program for teens b
 program where teens ages 13-18 build cool science related coding projects
 and get supa cool science prizes for free!!
 
-From Oct 9th to November 9th, you’ll spend the next few weeks building
+From Oct 9th to November 21st, you’ll spend the next few weeks building
 projects, earning moles, making friends, and hopefully getting the
 sciencey prizes of your dreams. I’ve always wanted a space for Hack Club
 members and programmers to nerd out about science. And I hope this YSWS

@@ -225,7 +225,7 @@ the actual code, the code wins — fix the file, don't trust the doc.
   went through a review round can't be deleted (it holds the attempt count and the
   reviewer's notes; deleting it would hand out fresh attempts).
 - **Hackatime hours are always counted from June 1 (`config.programStartDate`)
-  to Nov 10 (`config.programEndDate`), the same window for everyone.** Users never pick dates: the client sends only project names, the
+  to Nov 21 (`config.programEndDate`), the same window for everyone.** Users never pick dates: the client sends only project names, the
   backend verifies them against the caller's own Hackatime account, builds the
   date range itself, and re-verifies at submit. The total tracked time of the selected projects is snapshotted
   into `projects.hackatime_seconds` (on selection and again at submit, from the
